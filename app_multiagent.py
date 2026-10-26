@@ -13,7 +13,7 @@ import litellm
 from pdf2recipe import pdf_bytelist_to_recipes, pdf_bytes_to_markdown
 from cloud_runtime import safe_completion as completion
 from datetime import datetime
-from reviewer_sources import REVIEWERS, load_reviewer_sources
+from reviewer_sources import REVIEWERS, load_reviewer_sources, load_hosted_reviewer_sources
 
 # ── Multi-Agent Refinement 모듈 ──
 from multiagent_refinement import (
@@ -73,6 +73,7 @@ def _resume_managed_connection():
 
 def _clear_reviewer_sources():
     for key in ("specialist_kbs", "reviewer_source_names",
+                "reviewer_library_signature", "reviewer_library_warning",
                 "reviewer_pdfs_material_properties", "reviewer_pdfs_process_conditions"):
         st.session_state.pop(key, None)
 
@@ -411,12 +412,42 @@ KB_PDF_ROOT = str(APP_DIR / "kb_pdfs")
 SPECIALIST_KB_META = {
     key: (label, str(Path(KB_PDF_ROOT) / key)) for key, label in REVIEWERS.items()
 }
+reviewer_library_repo = _operator_setting("REVIEWER_KB_REPO")
+if reviewer_library_repo:
+    from cloud_runtime import credential_fingerprint
+    library_signature = (reviewer_library_repo, credential_fingerprint(openai_api_key, hf_token))
+    if st.session_state.get("reviewer_library_signature") != library_signature:
+        with st.spinner("Loading the default reviewer literature..."):
+            try:
+                library, names, failures = load_hosted_reviewer_sources(
+                    reviewer_library_repo, hf_token=hf_token, api_key=openai_api_key)
+                st.session_state.specialist_kbs = library
+                st.session_state.reviewer_source_names = names
+                if failures:
+                    st.session_state.reviewer_library_warning = "Some default reviewer papers could not be loaded."
+                else:
+                    st.session_state.pop("reviewer_library_warning", None)
+            except Exception:
+                st.session_state.reviewer_library_warning = (
+                    "Default reviewer literature is unavailable. Check the configured repository, "
+                    "HF token and access permissions, or upload reviewer PDFs below.")
+            finally:
+                # Do not repeat failed downloads/paid embeddings on every widget rerun.
+                st.session_state.reviewer_library_signature = library_signature
 
 with st.sidebar.expander("Reviewer literature", expanded=False):
     st.caption("The workflow has two reviewers, followed by a Supervisor. "
                "Their specialist PDFs are separate from the recipe-retrieval dataset. "
                "Upload papers below and select Load reviewer papers. "
                "Extraction and embedding use the connected API account.")
+    if reviewer_library_repo:
+        st.caption("Default literature is loaded automatically from the operator's configured repository. "
+                   "You do not need to upload the default papers for each visit.")
+        if st.session_state.get("reviewer_library_warning"):
+            st.warning(st.session_state.reviewer_library_warning)
+        if st.button("Reload default reviewer literature"):
+            st.session_state.pop("reviewer_library_signature", None)
+            st.rerun()
     reviewer_uploads = {}
     for role, label in REVIEWERS.items():
         reviewer_uploads[role] = st.file_uploader(

@@ -24,6 +24,7 @@ OPENAI_API_KEY = ""
 HF_TOKEN = ""
 HF_DATASET_ID = "blueper/oxidesc-recipe-ver2"
 HF_DATASET_SPLIT = "all"
+REVIEWER_KB_REPO = ""
 ```
 
 The key and token are read server-side using `st.secrets`. When `OPENAI_API_KEY`
@@ -75,6 +76,20 @@ Loading papers affects subsequent reviews only. Generate a new recipe or request
 a revision after loading; an already completed result is not automatically rerun.
 If no papers are loaded, the sidebar states this explicitly. **Clear reviewer
 papers** removes the session's uploaded reviewer selections and indexes.
+
+To provide default papers to every visitor without publishing PDFs in GitHub,
+store authorized PDFs in a private Hugging Face dataset with folders
+`material_properties/` and `process_conditions/`. Give the connected HF token
+read access and set `REVIEWER_KB_REPO` in Streamlit Secrets to that dataset ID.
+The app then downloads and indexes the two collections automatically per session;
+visitors do not need to upload the standard papers. Downloads use a temporary
+directory that is removed after indexing. A loaded KB remains in the session's
+memory and may supply excerpts to reviews and Q&A. Private storage does not
+replace permissions needed to process or expose source text to the app audience.
+The recipe retrieval dataset configured by `HF_DATASET_ID` is separate.
+The same two folders may be packaged in a single `reviewer_library.zip` at the
+dataset root. The app downloads that archive once, reads PDF entries directly,
+and never extracts ZIP paths into the server filesystem.
 
 The HF dataset must match `data_collection/README.md`. Tokens do not create access
 rights: grant access on HF first. A dataset in a different schema or embedding

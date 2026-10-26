@@ -151,6 +151,44 @@ class PredictorTests(unittest.TestCase):
 
 
 class ReviewerTests(unittest.TestCase):
+    def test_hosted_archive_preserves_both_collections(self):
+        from reviewer_sources import load_hosted_reviewer_sources
+        import tempfile, zipfile
+        with tempfile.TemporaryDirectory() as folder:
+            package = Path(folder) / "reviewer_library.zip"
+            with zipfile.ZipFile(package, "w") as out:
+                out.writestr("material_properties/material.pdf", b"synthetic material")
+                out.writestr("process_conditions/process.pdf", b"synthetic process")
+                out.writestr("gate_dielectric/ignored.pdf", b"ignored")
+            with patch("huggingface_hub.HfApi") as api, patch("huggingface_hub.hf_hub_download", return_value=str(package)) as download, patch("multiagent_refinement.build_kb_from_pdfs", return_value=["synthetic chunk"]) as build:
+                api.return_value.list_repo_files.return_value = ["reviewer_library.zip"]
+                kbs, names, failures = load_hosted_reviewer_sources("synthetic/private-papers", "synthetic-hf", "synthetic-api")
+                self.assertEqual(set(kbs), {"material_properties", "process_conditions"})
+                self.assertFalse(failures)
+                self.assertEqual(download.call_count, 1)
+                self.assertEqual(build.call_args_list[0].args[0], [b"synthetic material"])
+                self.assertEqual(build.call_args_list[1].args[0], [b"synthetic process"])
+
+    def test_hosted_papers_use_explicit_token_and_only_two_role_folders(self):
+        from reviewer_sources import load_hosted_reviewer_sources
+        import tempfile
+        with tempfile.TemporaryDirectory() as folder:
+            pdf = Path(folder) / "synthetic.pdf"
+            pdf.write_bytes(b"synthetic-pdf")
+            with patch("huggingface_hub.HfApi") as api, patch("huggingface_hub.hf_hub_download", return_value=str(pdf)) as download, patch("multiagent_refinement.build_kb_from_pdfs", return_value=["synthetic chunk"]) as build:
+                api.return_value.list_repo_files.return_value = [
+                    "material_properties/material.pdf", "process_conditions/process.pdf",
+                    "gate_dielectric/ignored.pdf", "README.md"]
+                kbs, names, failures = load_hosted_reviewer_sources(
+                    "synthetic/private-papers", "synthetic-read-token", "synthetic-api-a")
+                self.assertEqual(set(kbs), {"material_properties", "process_conditions"})
+                self.assertFalse(failures)
+                api.assert_called_once_with(token="synthetic-read-token")
+                self.assertEqual(download.call_count, 2)
+                self.assertTrue(all(c.kwargs["token"] == "synthetic-read-token" for c in download.call_args_list))
+                self.assertEqual(build.call_count, 2)
+                self.assertEqual(names["material_properties"], ["material.pdf"])
+
     def test_two_roles_and_session_upload_routing(self):
         from reviewer_sources import REVIEWERS, load_reviewer_sources
         self.assertEqual(set(REVIEWERS), {"material_properties", "process_conditions"})
@@ -379,6 +417,19 @@ class StreamlitTests(unittest.TestCase):
             self.button(app, "Recommend").click().run()
             self.assertFalse(app.exception)
             self.assertIn("latest_recipe_json", app.session_state)
+
+    def test_default_reviewer_library_loads_automatically_once_per_session(self):
+        with patch("reviewer_sources.load_hosted_reviewer_sources", return_value=(
+                {"material_properties": ["material chunk"], "process_conditions": ["process chunk"]},
+                {"material_properties": ["material.pdf"], "process_conditions": ["process.pdf"]}, [])) as load:
+            app = self.managed_app()
+            app.secrets["REVIEWER_KB_REPO"] = "synthetic/private-papers"
+            app.run()
+            self.assertFalse(app.exception)
+            self.assertEqual(set(app.session_state["specialist_kbs"]), {"material_properties", "process_conditions"})
+            load.assert_called_once_with("synthetic/private-papers", hf_token="synthetic-operator-hf", api_key="synthetic-operator-api")
+            app.run()
+            self.assertEqual(load.call_count, 1)
 
 
 if __name__ == "__main__":
