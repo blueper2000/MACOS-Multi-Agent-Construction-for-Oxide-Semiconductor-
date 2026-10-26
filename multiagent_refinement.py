@@ -1,5 +1,5 @@
 import numpy as np
-import litellm
+from cloud_runtime import safe_completion, safe_embedding
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -122,7 +122,7 @@ def build_kb_from_pdfs(
     all_embeddings: list[list[float]] = []
     for batch_start in range(0, len(all_chunks), batch_size):
         batch = all_chunks[batch_start: batch_start + batch_size]
-        resp = litellm.embedding(model=embedding_model, input=batch, api_key=api_key)
+        resp = safe_embedding(model=embedding_model, input=batch, api_key=api_key)
         all_embeddings.extend([item["embedding"] for item in resp["data"]])
 
     emb_array = np.array(all_embeddings, dtype=np.float32)
@@ -225,7 +225,7 @@ def run_refinement_sequential(
             step_callback(step_num, label, feedback)
 
     def _llm(prompt: str, max_tokens: int = 1500) -> str:
-        resp = litellm.completion(
+        resp = safe_completion(
             model=specialist_model,
             messages=[{"role": "user", "content": prompt}],
             max_tokens=max_tokens,
@@ -234,7 +234,7 @@ def run_refinement_sequential(
         return resp["choices"][0]["message"]["content"].strip()
 
     def _embed(text: str) -> list[float]:
-        resp = litellm.embedding(model="text-embedding-3-large", input=[text], api_key=api_key)
+        resp = safe_embedding(model="text-embedding-3-large", input=[text], api_key=api_key)
         return resp["data"][0]["embedding"]
 
     def _kb_context(kb_key: str, query: str) -> str:

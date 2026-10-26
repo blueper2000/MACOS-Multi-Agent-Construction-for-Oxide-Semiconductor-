@@ -1,5 +1,5 @@
 import pymupdf4llm
-from litellm import completion, batch_completion
+from cloud_runtime import safe_completion as completion, safe_batch_completion as batch_completion
 
 
 PROMPT = """You are a materials science expert. Your task is to extract ONLY explicitly stated synthesis-related information from the provided research paper. Do NOT assume or infer any information not directly stated in the paper.
@@ -131,7 +131,7 @@ def pdf_bytes_to_markdown(pdf_bytes):
     
     return md_text
 
-def extract_recipe_from_text(texts, model="gpt-4o-2024-11-20"):
+def extract_recipe_from_text(texts, model="gpt-4o", api_key=None):
     def filter_text(text):
         if len(text) < 100:
             return None
@@ -150,6 +150,7 @@ def extract_recipe_from_text(texts, model="gpt-4o-2024-11-20"):
         messages=messages,
         max_tokens=4096,
         temperature=0.6,
+        api_key=api_key,
     )
     return [message.choices[0].message.content for message in messages]
 
@@ -159,9 +160,9 @@ def read_pdf(pdf_file):
         text = pdf_bytes_to_markdown(pdf_bytes)
         return text
     
-def pdf_bytelist_to_recipes(pdf_bytelist, model="gpt-4o-2024-11-20"):
+def pdf_bytelist_to_recipes(pdf_bytelist, model="gpt-4o", api_key=None):
     texts = [pdf_bytes_to_markdown(pdf_bytes) for pdf_bytes in pdf_bytelist]
-    return extract_recipe_from_text(texts, model=model)
+    return extract_recipe_from_text(texts, model=model, api_key=api_key)
 
 if __name__ == "__main__":
     pdf_files = ["test.pdf", "test.pdf"]

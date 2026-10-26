@@ -10,4 +10,7 @@ data_collection/*.faiss
 data_collection/*.parquet
 faiss_index*.faiss
 kb_pdfs/
-
+.env.*
+!.env.example
+.streamlit/secrets.toml
+.hf_cache/

@@ -2,34 +2,35 @@
 
 Streamlit application for generating and refining oxide-semiconductor synthesis recipes with language models and retrieval.
 
-## Setup
+## Run locally
 
-Use Python 3.10 or newer. Install dependencies and create a local environment file:
+Use Python 3.11. Install dependencies and run:
 
 ```bash
 python -m venv .venv
-source .venv/bin/activate
+# Windows: .venv\Scripts\activate
+# macOS/Linux: source .venv/bin/activate
 pip install -r requirements.txt
-cp .env.example .env
-```
-
-Add your own `OPENAI_API_KEY` to `.env`, then run:
-
-```bash
 streamlit run app_multiagent.py
 ```
 
-The key is read from the environment and is not included in this repository. Do not commit `.env` or paste API keys into source files. `HF_TOKEN` is optional and is only needed when loading a gated Hugging Face dataset.
+Enter your own OpenAI key in the app sidebar and select **Apply credentials**.
+Select **LLM-only**, **PDF**, or **RAG**. LLM-only and PDF require no retrieval
+corpus or Hugging Face token. RAG additionally requires your read-only HF token,
+an authorized dataset ID and a compatible dataset schema. Keys belong to your
+session; changing credentials clears previous results and loaded data.
+
+For deployment, privacy details, mode differences and memory limits see
+[DEPLOYMENT.md](DEPLOYMENT.md). Select `app_multiagent.py` on branch `main` in
+Streamlit Community Cloud and Python 3.11. No shared API secrets are required.
 
 ## Retrieval assets
 
-The app expects these locally supplied files under `data_collection/`:
-
-- `s_d_plus_extracted_markdown_with_contribution.parquet`
-- `_runtime_sd_plus_rag_prompt.txt`
-- `_runtime_sd_plus_prediction_prompt.txt`
-
-The runtime prompt files are included. The retrieval Parquet dataset is not included; provide it separately before launching the app. The app creates a FAISS index from that dataset when needed. Specialist PDF knowledge bases can be added under `kb_pdfs/`. Those research papers are also excluded from this source release.
+The initial-generation runtime prompt templates are included in `data_collection/`.
+The original literature-derived Parquet corpus, FAISS indexes and specialist
+PDFs are excluded. See [data schema](data_collection/README.md) and
+[baseline comparison](BASELINE_COMPARISON.md). No dataset is downloaded for
+LLM-only or PDF mode. The cloud RAG path builds an index in the current session.
 
 ## Notes
 
@@ -59,14 +60,13 @@ source materials have not been established. Public access to a paper does not by
 itself establish permission to redistribute it or a dataset derived from it.
 No access to the original dataset is promised by this repository.
 
-The current app requires a local retrieval dataset even when choosing a
-non-retrieval generation setting. Without it, startup stops with a missing-file
-message. Source inspection is possible without the dataset; executing the full
-workflow requires separately and lawfully prepared assets. A replacement dataset
-can demonstrate the workflow but does not reproduce the paper's original benchmark.
+LLM-only and PDF modes work without the original retrieval dataset. RAG requires
+a separately authorized HF corpus matching the documented schema. A replacement
+corpus can demonstrate the workflow but cannot reproduce the paper's original
+benchmark. Specialist knowledge bases are not bundled; reviews without them use
+model knowledge and available recipe references.
 
 See [data_collection/README.md](data_collection/README.md) for the input schema.
-The two included prompt templates are the shared prompts for the app and predictor
-classes. The legacy batch entry point in `experiment/predict.py` also expects a
-separate local evaluation dataset at `data/omg`; that dataset is not included, and
-the batch entry point has not been validated as a standalone reproduction pipeline.
+The runtime prompts are shared by the app and predictor classes. The legacy batch
+entry point also expects a separate evaluation dataset at `data/omg`; it is not
+the cloud app entry point or a validated standalone reproduction pipeline.

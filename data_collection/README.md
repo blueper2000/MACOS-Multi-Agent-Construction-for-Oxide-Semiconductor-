@@ -3,8 +3,9 @@
 The repository includes only the two runtime prompt templates. Do not commit
 literature-derived Parquet data, FAISS indexes, or source PDFs.
 
-To run the app, prepare your own lawfully obtained data and save it as
-`s_d_plus_extracted_markdown_with_contribution.parquet` in this directory.
+The cloud app starts without this corpus in LLM-only/PDF modes. For RAG, provide
+a dataset on Hugging Face that your account can access, using the schema below.
+The library also supports a local Parquet path for authorized local use.
 The loader in `experiment/predict.py` expects one row per retrievable recipe:
 
 | Column | Format | Requirement |
@@ -16,9 +17,10 @@ The loader in `experiment/predict.py` expects one row per retrievable recipe:
 | `paper_id`, `sample_label`, `pdf_file` | Text | Optional provenance fields; use only metadata you may share. |
 | `classification_result` | Text | Optional metadata. |
 
-Rows with missing embeddings are dropped by the loader. The app builds a local
-FAISS index beside the Parquet file. Remove the generated index after replacing
-the dataset or changing its embedding model or vector dimension, so it is rebuilt.
+Rows with missing embeddings are dropped; remaining vectors must be finite and
+have one consistent dimension. The cloud RAG index is built in session memory and
+is not saved to a shared file. The cloud loader does not automatically read a
+Parquet file merely because one exists beside these prompt templates.
 
 A wholly fictional row might pair the contribution text "Synthetic test: oxide
 channel deposited by ALD" with the recipe text "Fictional example; not an

@@ -1,18 +1,17 @@
 from pathlib import Path
 
-from dotenv import load_dotenv
-load_dotenv(Path(__file__).resolve().parent / ".env")
 
 import json
 import pandas as pd
 from io import BytesIO
 import streamlit as st
 import os
-from experiment.predict import RAGRecipePredictor, RecipePredictor
-from litellm import embedding
+from experiment.predict import RAGRecipePredictor, RecipePredictor, ReferenceRecipePredictor
+from cloud_runtime import safe_error
+from cloud_runtime import safe_embedding as embedding
 import litellm
 from pdf2recipe import pdf_bytelist_to_recipes, pdf_bytes_to_markdown
-from litellm import completion
+from cloud_runtime import safe_completion as completion
 from datetime import datetime
 
 # ── Multi-Agent Refinement 모듈 ──
@@ -45,27 +44,51 @@ st.markdown(
 
 st.sidebar.title("Input Parameters")
 
-missing_os_paths = [
-    path
-    for path in [LOCAL_RETRIEVAL_PARQUET, RUNTIME_RAG_PROMPT_PATH, RUNTIME_PREDICTION_PROMPT_PATH]
-    if not path.exists()
-]
-if missing_os_paths:
-    st.error(
-        "MACOS data_collection의 예측 데이터/프롬프트를 찾을 수 없습니다:\n"
-        + "\n".join(str(path) for path in missing_os_paths)
-    )
-    st.stop()
+def _clear_session():
+    st.session_state.clear()
 
-# --- API KEY ---
-# 앱 폴더의 .env에 있는 키만 사용하며 웹 UI에 노출하지 않습니다.
-openai_api_key = os.getenv("OPENAI_API_KEY")
-if not openai_api_key:
-    st.error("OPENAI_API_KEY가 설정되어 있지 않습니다. .env 파일을 확인하세요.")
-    st.stop()
 
-litellm.openai_key = openai_api_key
-litellm.api_key = openai_api_key
+def _apply_credentials():
+    api_key = st.session_state.get("openai_key_input", "").strip()
+    token = st.session_state.get("hf_token_input", "").strip()
+    # Changing credentials invalidates all previous outputs and loaded private data.
+    st.session_state.clear()
+    st.session_state.openai_key_input = api_key
+    st.session_state.hf_token_input = token
+    st.session_state.active_openai_key = api_key
+    st.session_state.active_hf_token = token
+
+
+def _start_generation():
+    for key in ("messages", "references", "latest_recipe_json", "fixed_examples",
+                "retrieval_examples", "original_contribution", "current_contribution",
+                "current_recipe", "latest_meta", "refined_recipe", "ma_result",
+                "initial_pdf_context", "initial_pdf_names", "initial_pdf_warnings"):
+        st.session_state.pop(key, None)
+
+
+with st.sidebar:
+    with st.form("credentials"):
+        st.subheader("API connection")
+        st.text_input("OpenAI API key", type="password", key="openai_key_input")
+        st.text_input("Hugging Face token (optional)", type="password", key="hf_token_input")
+        st.caption("Keys are sent to this app server for API requests and held in your session. "
+                   "They are not written to files or shared caches. API charges apply to your account. "
+                   "Use a read-only HF token limited to the required dataset.")
+        st.form_submit_button("Apply credentials", on_click=_apply_credentials)
+    st.button("Disconnect and clear session", on_click=_clear_session)
+    generation_mode = st.selectbox("Generation mode", ["LLM-only", "PDF", "RAG"], key="generation_mode")
+    dataset_id = ""
+    dataset_split = "all"
+    if generation_mode == "RAG":
+        dataset_id = st.text_input("Hugging Face dataset", "blueper/oxidesc-recipe-ver2")
+        dataset_split = st.text_input("Dataset split (or all)", "all")
+        st.caption("Your HF account must already have access. A token does not grant new permissions.")
+    st.caption("Sequential reviews use model knowledge and supplied references. "
+               "The paper's specialist PDF knowledge bases are not bundled.")
+
+openai_api_key = st.session_state.get("active_openai_key", "")
+hf_token = st.session_state.get("active_hf_token", "")
 
 # --- Inputs (left sidebar form) ---
 with st.sidebar, st.form("recipe_form"):
@@ -92,14 +115,25 @@ with st.sidebar, st.form("recipe_form"):
         ],
     )
 
-    top_k = st.slider("Number of Retrievals", 0, 10, 5)
+    requested_top_k = st.slider("Number of Retrievals (RAG only)", 1, 10, 5, disabled=generation_mode != "RAG")
+    top_k = requested_top_k if generation_mode == "RAG" else 0
 
-    files = st.file_uploader("Upload PDF Files", type=["pdf"], accept_multiple_files=True)
+    files = st.file_uploader("Upload PDF Files (PDF/RAG modes)", type=["pdf"], accept_multiple_files=True, disabled=generation_mode == "LLM-only")
+    if generation_mode == "LLM-only":
+        files = []
     if files:
         for file in files:
             st.write(file.name)
 
-    generate_btn = st.form_submit_button("Recommend")
+    generate_btn = st.form_submit_button("Recommend", on_click=_start_generation)
+
+# No API requests or dataset access before the user supplies a key and submits.
+if not openai_api_key:
+    st.info("Enter your OpenAI API key in the sidebar and select Apply credentials to start.")
+    st.stop()
+if generate_btn and generation_mode == "PDF" and not files:
+    st.warning("Upload at least one PDF for PDF mode, or choose LLM-only.")
+    st.stop()
 
 # === META helpers ===
 def _build_key_contributions(material_name, deposition_method, mobility_target, stability_target, other_constraints):
@@ -153,7 +187,7 @@ def _assign_ref_ids(refs):
     for i, r in enumerate(refs or [], 1):
         if isinstance(r, dict):
             item = dict(r)
-            item["ref_id"] = item.get("ref_id") or f"Ref{i}"
+            item["ref_id"] = f"Ref{i}"
             out.append(item)
         else:
             out.append({"s2_url": None, "contribution": str(r), "recipe": "", "rid": None, "ref_id": f"Ref{i}"})
@@ -294,7 +328,7 @@ with st.sidebar.expander("Load previous prediction tables"):
                 st.session_state.retrieval_examples = meta.get("references", [])
                 st.toast("번들 파일을 불러왔습니다. 다음 질문부터 이 컨텍스트를 사용합니다.")
         except Exception as e:
-            st.error(f"파일을 해석하는 중 오류가 발생했습니다: {e}")
+            st.error(f"파일을 해석하는 중 오류가 발생했습니다: {safe_error(e)}")
 
 
 clear_btn = st.sidebar.button("Clear Conversation")
@@ -325,11 +359,10 @@ SPECIALIST_KB_META = {
 }
 
 
-@st.cache_resource(show_spinner=False)
 def _load_all_kbs(api_key: str) -> dict:
     """
     kb_pdfs/ 하위 폴더에서 각 specialist KB 를 빌드합니다.
-    st.cache_resource 로 캐싱되어 앱 재실행 시 재빌드하지 않습니다.
+    명시적으로 빌드하며 현재 사용자 세션에만 보관합니다.
     PDF 파일이 없는 폴더는 건너뜁니다.
     """
     import glob
@@ -344,18 +377,18 @@ def _load_all_kbs(api_key: str) -> dict:
                 kbs[key] = kb
         except Exception as e:
             # KB 빌드 실패는 앱 실행을 막지 않음
-            print(f"[KB] {label} 빌드 실패: {e}")
+            st.warning(f"{label}: specialist PDF loading failed.")
     return kbs
 
 
 # KB 로드 (API 키가 있을 때만)
-_kb_cache: dict = _load_all_kbs(openai_api_key)
+_kb_cache: dict = st.session_state.get("specialist_kbs", {})
 
 # 사이드바: KB 상태 표시 + 수동 갱신 버튼
 with st.sidebar.expander("📚 리뷰 논문", expanded=False):
     st.caption(
         f"**kb_pdfs/** 하위 폴더에 PDF 를 넣으면 답변과 레시피 검토에 자동으로 참조합니다.\n\n"
-        f"`{KB_PDF_ROOT}`"
+        "Specialist sources are optional and are not included in this public release."
     )
 
     import glob as _glob
@@ -376,7 +409,7 @@ with st.sidebar.expander("📚 리뷰 논문", expanded=False):
 
     st.markdown("---")
     if st.button("🔄 KB 재빌드 (파일 변경 시)", use_container_width=True):
-        st.cache_resource.clear()
+        st.session_state.specialist_kbs = _load_all_kbs(openai_api_key)
         st.rerun()
 
     kb_top_k = st.slider("KB 검색 청크 수 (top-k)", 1, 6, 3, key="kb_top_k")
@@ -453,7 +486,7 @@ def call_completion_model(messages, model_name):
             "max_tokens": 4096
         }
 
-    return completion(**kwargs)
+    return completion(api_key=openai_api_key, **kwargs)
 
 # ---------------- JSON parsing & rendering utils ----------------
 def _pull_json_like(text: str) -> str | None:
@@ -781,7 +814,7 @@ def regenerate_recipe_with_feedback(
     fixed_examples: list | None,
     top_k: int,
 ):
-    emb = get_embedding(revised_contribution)
+    emb = get_embedding(revised_contribution) if top_k > 0 else None
 
     predictor = rag_predictor
     predictor.model = model_name
@@ -792,7 +825,7 @@ def regenerate_recipe_with_feedback(
     if top_k > 0:
         ref_df = predictor.search(emb, k=top_k, return_rows=True)
         if ref_df is not None and len(ref_df) > 0:
-            limit = min(top_k, len(ref_df))
+            limit = min(top_k, len(ref_df["recipe"]))
             for i in range(limit):
                 rid = ref_df["id"][i] if "id" in ref_df else ""
                 contribution = ref_df["contribution"][i] if "contribution" in ref_df else ""
@@ -804,17 +837,10 @@ def regenerate_recipe_with_feedback(
                     "recipe": recipe_txt,
                     "rid": rid,
                     "pdf_file": pdf_file,
-                    "ref_id": f"Ref{i + 1}",
+                    "ref_id": f"Ref{len(fixed_examples) + i + 1}",
                 })
 
-    existing_recipe_example = {
-        "s2_url": None,
-        "contribution": revised_contribution,
-        "recipe": current_recipe,
-        "rid": None,
-    }
-
-    base_examples = [existing_recipe_example] + fixed_examples + retrieval_examples
+    base_examples = fixed_examples + retrieval_examples
     predictor.base_references = base_examples
 
     prev_rag_topk = getattr(predictor, "rag_topk", 0)
@@ -822,7 +848,7 @@ def regenerate_recipe_with_feedback(
 
     batch = [
         {
-            "contribution": revised_contribution,
+            "contribution": revised_contribution + "\n\nPrevious recipe to revise (not literature evidence):\n" + current_recipe,
             "recipe": "",
             "contributions_embedding": emb,
         }
@@ -848,37 +874,41 @@ PREDICTION_PROMPT = """## Key Contributions
 
 # ---------------- Embedding & Predictors ----------------
 def get_embedding(contributions):
-    # litellm.openai_key는 이미 상단에서 세팅됨
-    response = embedding(model='text-embedding-3-large', input=[contributions])
+    response = embedding(model='text-embedding-3-large', input=[contributions], api_key=openai_api_key)
     emb = response['data'][0]['embedding']
     return emb
 
-@st.cache_resource(show_spinner=False)
 def get_predictors(model_name, api_key, rag_topk):
-    rag_predictor = RAGRecipePredictor(
-        model=model_name,
-        prompt_filename=str(RUNTIME_RAG_PROMPT_PATH),
-        rag_topk=rag_topk,
-        retrieval_split="all",
-        api_key=api_key,
-        retrieval_parquet_path=str(LOCAL_RETRIEVAL_PARQUET),
-    )
-    base_predictor = RecipePredictor(
-        model=model_name,
-        prompt_filename=str(RUNTIME_PREDICTION_PROMPT_PATH),
-        api_key=api_key,
-    )
-    return rag_predictor, base_predictor
+    from cloud_runtime import credential_fingerprint
+    signature = (model_name, rag_topk, generation_mode, dataset_id, dataset_split,
+                 credential_fingerprint(api_key, hf_token))
+    if st.session_state.get("predictor_signature") != signature:
+        reference_predictor = ReferenceRecipePredictor(model=model_name, api_key=api_key)
+        if generation_mode == "RAG":
+            if not dataset_id.strip() or not hf_token:
+                raise ValueError("Provide a dataset ID and HF token for RAG mode.")
+            rag = RAGRecipePredictor(
+                model=model_name, api_key=api_key, rag_topk=rag_topk,
+                retrieval_split=dataset_split.strip() or "all",
+                hf_token=hf_token, dataset_id=dataset_id.strip())
+        else:
+            rag = reference_predictor
+        base = RecipePredictor(model=model_name, api_key=api_key)
+        st.session_state.predictors = (rag, base)
+        st.session_state.predictor_signature = signature
+    return st.session_state.predictors
 
-with st.status("🔄 모델 및 데이터셋 초기화 중...", expanded=True) as _init_status:
-    st.write("📂 로컬 데이터셋 로드 중...")
+
+with st.status("Preparing generation mode…", expanded=False) as _init_status:
     try:
         rag_predictor, base_predictor = get_predictors(model, openai_api_key, top_k)
-        st.write("✅ FAISS 인덱스 준비 완료")
-        _init_status.update(label="✅ 초기화 완료", state="complete", expanded=False)
-    except Exception as _e:
-        _init_status.update(label="❌ 초기화 실패", state="error", expanded=True)
-        st.error(f"데이터셋 로드 오류: {_e}")
+        _init_status.update(label="Ready", state="complete")
+    except Exception:
+        st.session_state.pop("predictors", None)
+        st.session_state.pop("predictor_signature", None)
+        _init_status.update(label="Connection or dataset unavailable", state="error")
+        st.error("Could not prepare this mode. For RAG, check the read token, dataset access, "
+                 "split and documented schema. You can select LLM-only or PDF without a dataset.")
         st.stop()
 
 # ---------------- Core predict & ask flows ----------------
@@ -907,9 +937,7 @@ def predict_recipe(
 
     if use_rag or files:
         predictor = rag_predictor
-        _step("🔢 텍스트 임베딩 계산 중…")
-        emb = get_embedding(contributions)
-        _step("✅ 임베딩 완료")
+        emb = get_embedding(contributions) if use_rag else None
     else:
         predictor = base_predictor
         emb = None
@@ -924,7 +952,9 @@ def predict_recipe(
         st.session_state.initial_pdf_warnings = initial_pdf_warnings
         for warning in initial_pdf_warnings:
             _step(f"⚠️ {warning}")
-        references = pdf_bytelist_to_recipes(pdf_bytes_list)
+        references = pdf_bytelist_to_recipes(pdf_bytes_list, api_key=openai_api_key)
+        if not references:
+            raise ValueError("No readable recipe content was extracted from the uploaded PDFs.")
         _step(f"✅ PDF 추출 완료 ({len(references)}개 참조)")
     else:
         st.session_state.initial_pdf_context = ""
@@ -959,10 +989,10 @@ def predict_recipe(
     _step("✅ 레시피 초안 생성 완료")
 
     retrieval_examples = []
-    if use_rag or files:
+    if use_rag:
         ref_df = predictor.search(emb, k=top_k, return_rows=True)
         if ref_df is not None and len(ref_df) > 0:
-            limit = min(top_k, len(ref_df))
+            limit = min(top_k, len(ref_df["recipe"]))
             for i in range(limit):
                 rid = ref_df["id"][i] if "id" in ref_df else ""
                 contribution = ref_df["contribution"][i] if "contribution" in ref_df else ""
@@ -974,7 +1004,7 @@ def predict_recipe(
                     "recipe": recipe_txt,
                     "rid": rid,
                     "pdf_file": pdf_file,
-                    "ref_id": f"Ref{i + 1}",
+                    "ref_id": f"Ref{len(fixed_examples) + i + 1}",
                 })
         _step(f"✅ 유사 논문 {len(retrieval_examples)}개 검색 완료")
 
@@ -1102,7 +1132,7 @@ def _read_uploaded_file_for_context(uploaded_file, max_chars: int = 50000) -> tu
         else:
             return "", f"{name}: 지원하지 않는 파일 형식입니다."
     except Exception as e:
-        return "", f"{name}: 파일을 읽는 중 오류가 발생했습니다: {e}"
+        return "", f"{name}: 파일을 읽는 중 오류가 발생했습니다: {safe_error(e)}"
 
     text = (text or "").strip()
     if not text:
@@ -1116,7 +1146,7 @@ def _pdf_bytes_to_context(name: str, raw: bytes, max_chars: int = 50000) -> tupl
     try:
         text = pdf_bytes_to_markdown(raw)
     except Exception as e:
-        return "", f"{name}: PDF 원문을 읽는 중 오류가 발생했습니다: {e}"
+        return "", f"{name}: PDF 원문을 읽는 중 오류가 발생했습니다: {safe_error(e)}"
 
     text = (text or "").strip()
     if not text:
@@ -1188,7 +1218,7 @@ def _build_qa_kb_context(user_text: str, top_k: int | None = None) -> str:
         )
         q_emb = get_embedding(query)
     except Exception as e:
-        return f"Specialist KB search failed: {e}"
+        return f"Specialist KB search failed: {safe_error(e)}"
 
     per_kb_top_k = top_k or st.session_state.get("kb_top_k", 3)
     sections = []
@@ -1199,7 +1229,7 @@ def _build_qa_kb_context(user_text: str, top_k: int | None = None) -> str:
         try:
             chunks = kb.query(q_emb, top_k=per_kb_top_k)
         except Exception as e:
-            sections.append(f"## {label}\nSearch failed: {e}")
+            sections.append(f"## {label}\nSearch failed: {safe_error(e)}")
             continue
         if chunks:
             sections.append(
@@ -1316,7 +1346,7 @@ def _run_refinement_with_status(raw_recipe_json: str, label_prefix: str = "") ->
             status_widget.update(label=f"{label_prefix}Multi-Agent 검토 완료 ✅", state="complete", expanded=False)
         except Exception as e:
             status_widget.update(label=f"{label_prefix}오류 발생", state="error", expanded=True)
-            st.error(f"Multi-agent 오류: {e}")
+            st.error(safe_error(e))
 
     return result_holder
 
@@ -1404,12 +1434,18 @@ if not hasattr(st.session_state, "messages"):
     else:
         # 신규 생성 경로
         with st.status("📋 레시피 생성 진행 중…", expanded=True) as _predict_status:
-            recipe, references, user_prompt = predict_recipe(
-                material_name, synthesis_technique,
-                mobility_target, stability_target, other_contstraints,
-                top_k, model, use_rag, files=files,
-                step_callback=st.write,
-            )
+            try:
+                recipe, references, user_prompt = predict_recipe(
+                    material_name, synthesis_technique,
+                    mobility_target, stability_target, other_contstraints,
+                    top_k, model, use_rag, files=files,
+                    step_callback=st.write,
+                )
+            except Exception as error:
+                st.session_state.pop("messages", None)
+                _predict_status.update(label="Generation failed", state="error")
+                st.error(safe_error(error))
+                st.stop()
             _predict_status.update(label="✅ 레시피 초안 완성", state="complete", expanded=False)
             st.session_state.references = references
             st.session_state.messages.append({"role": "user", "content": user_prompt})

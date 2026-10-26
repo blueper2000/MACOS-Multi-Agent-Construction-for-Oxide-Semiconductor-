@@ -1,0 +1,14 @@
+[server]
+headless = true
+maxUploadSize = 25
+enableXsrfProtection = true
+enableCORS = true
+
+[client]
+showErrorDetails = "none"
+
+[browser]
+gatherUsageStats = false
+
+[theme]
+primaryColor = "#176B74"

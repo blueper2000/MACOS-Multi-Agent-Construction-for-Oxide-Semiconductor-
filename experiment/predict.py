@@ -1,6 +1,6 @@
 import os
 from pathlib import Path
-from litellm import batch_completion, completion
+from cloud_runtime import safe_batch_completion as batch_completion, safe_completion as completion
 import openai
 import fire
 from datasets import Dataset, load_dataset, load_from_disk, concatenate_datasets
@@ -105,8 +105,9 @@ class RecipePredictor:
         self.batch_size = batch_size
         self.max_tokens = max_tokens
         self.temperature = temperature
+        self.api_key = api_key
         self.client = openai.OpenAI(api_key=api_key)
-        self.prediction_prompt = open(prompt_filename, encoding="utf-8").read()
+        self.prediction_prompt = Path(prompt_filename).read_text(encoding="utf-8")
         self.job_description = f"material prediction job w/ {model}"
         self.max_completion_tokens = max_completion_tokens  
 
@@ -165,6 +166,7 @@ class RecipePredictor:
         messages = batch_completion(
             model=base_model,
             messages=prompts,
+            api_key=self.api_key,
             **batch_completion_kwargs
         )
         contents = [message['choices'][0]['message']['content'] for message in messages]
@@ -193,7 +195,7 @@ class RecipePredictor:
                     "temperature": self.temperature
                 }
             
-            message = completion(**kwargs)
+            message = completion(api_key=self.api_key, **kwargs)
             completions.append(message['choices'][0]['message']['content'])
         
         return completions
@@ -255,7 +257,6 @@ class RecipePredictor:
                 for j, prediction in enumerate(predictions):
                     yield dataset[i - batch_size + j + 1], prediction
                 batch = []
-                break
 
 
         if batch:
@@ -267,89 +268,43 @@ class RecipePredictor:
 
 class RAGRecipePredictor(RecipePredictor):
 
-    # Optional Hugging Face token for gated datasets. Keep credentials in the environment.
-    _HF_TOKEN = os.getenv("HF_TOKEN")
 
     def __init__(self, model="gpt-4o-mini", batch_size=1, max_tokens=4096, max_completion_tokens=16384, temperature=0, api_key=None, prompt_filename = _DEFAULT_RAG_PROMPT,
-                 rag_topk: int = 5, retrieval_split: str = "all", retrieval_parquet_path: str | None = None):
+                 rag_topk: int = 5, retrieval_split: str = "all", retrieval_parquet_path: str | None = None,
+                 hf_token: str | None = None, dataset_id: str = "blueper/oxidesc-recipe-ver2"):
         super().__init__(model, batch_size, max_tokens, max_completion_tokens, temperature, api_key, prompt_filename)
         self.job_description = f"RAG material prediction job w/ {model}"
 
+        from cloud_runtime import load_hf_retrieval, validate_retrieval_dataset
+
         if retrieval_parquet_path:
-            print(f"[1/3] 로컬 retrieval 데이터셋 로드 중: {retrieval_parquet_path}")
             self.retrieval_set = _load_local_retrieval_dataset(retrieval_parquet_path)
-            faiss_name = str(Path(retrieval_parquet_path).with_suffix(".faiss"))
-            print(f"[1/3] 로컬 데이터셋 로드 완료: {len(self.retrieval_set)}개 샘플")
         else:
-            # HuggingFace 인증 (gated dataset 접근용)
-            try:
-                from huggingface_hub import login
-                login(token=self._HF_TOKEN, add_to_git_credential=False)
-                print("[HF] 로그인 성공")
-            except Exception as e:
-                print(f"[HF] 로그인 실패: {e}")
-
-            # 데이터셋 로드
-            print("[1/3] 데이터셋 로드 중...")
-            if retrieval_split == "all":
-                retrieval_set = load_dataset("blueper/oxidesc-recipe-ver2", token=self._HF_TOKEN)
-                self.retrieval_set = concatenate_datasets(retrieval_set.values())
-            else:
-                self.retrieval_set = load_dataset("blueper/oxidesc-recipe-ver2", split="train", token=self._HF_TOKEN)
-            faiss_name = f"faiss_index_{retrieval_split}.faiss"
-            print(f"[1/3] 데이터셋 로드 완료: {len(self.retrieval_set)}개 샘플")
-
+            self.retrieval_set = load_hf_retrieval(dataset_id, hf_token, retrieval_split)
+        validate_retrieval_dataset(self.retrieval_set)
         self.rag_topk = rag_topk
-
-        # 임베딩 float32 정규화 (FAISS 요구사항)
-        print("[2/3] 임베딩 정규화 중...")
-
-        def _normalize_emb(x):
-            emb = x["contributions_embedding"]
-            if emb is None:
-                return {"contributions_embedding": None}
-            arr = np.array(emb, dtype=np.float32)
-            if arr.ndim != 1:
-                arr = arr.flatten()
-            return {"contributions_embedding": arr.tolist()}
-
-        self.retrieval_set = self.retrieval_set.map(_normalize_emb, desc="Normalizing embeddings", batched=False)
-        # None 임베딩 샘플 제거
-        before = len(self.retrieval_set)
-        self.retrieval_set = self.retrieval_set.filter(lambda x: x["contributions_embedding"] is not None)
-        removed = before - len(self.retrieval_set)
-        if removed:
-            print(f"[2/3] 임베딩 없는 샘플 {removed}개 제거")
-        print(f"[2/3] 임베딩 정규화 완료: {len(self.retrieval_set)}개 샘플")
-
-        # FAISS 인덱스 처리
-        try:
-            if os.path.exists(faiss_name):
-                print(f"[2/3] 기존 FAISS 인덱스 로드 중: {faiss_name}")
-                self.retrieval_set.load_faiss_index("contributions_embedding", faiss_name)
-                print(f"[2/3] FAISS 인덱스 로드 완료")
-            else:
-                print("[2/3] FAISS 인덱스 새로 생성 중...")
-                self.retrieval_set.add_faiss_index("contributions_embedding", "contributions_embedding")
-                self.retrieval_set.save_faiss_index("contributions_embedding", faiss_name)
-                print(f"[2/3] FAISS 인덱스 저장 완료: {faiss_name}")
-        except Exception as e:
-            print(f"[2/3] FAISS 인덱스 오류: {e}")
-            print("[2/3] 인덱스 재생성 중...")
-            self.retrieval_set.add_faiss_index("contributions_embedding", "contributions_embedding")
-        print("[3/3] RAG 예측기 준비 완료")
+        # Per-predictor in-memory index: no shared FAISS or private dataset cache.
+        self.retrieval_set.add_faiss_index("contributions_embedding")
 
         self.base_references = None
 
     def search(self, contribution, k=5, return_rows=False):
-        query_embedding = np.array(contribution)
-        scores, results = self.retrieval_set.get_nearest_examples("contributions_embedding", query_embedding, k)
+        if k <= 0:
+            return None if return_rows else ""
+        query_embedding = np.asarray(contribution, dtype=np.float32)
+        if query_embedding.ndim != 1 or not np.isfinite(query_embedding).all():
+            raise ValueError("Query embedding must be a finite vector.")
+        if len(query_embedding) != len(self.retrieval_set[0]["contributions_embedding"]):
+            raise ValueError("Dataset and query embedding dimensions differ; use text-embedding-3-large with default dimensions.")
+        scores, results = self.retrieval_set.get_nearest_examples(
+            "contributions_embedding", query_embedding, min(k, len(self.retrieval_set)))
         if return_rows:
             return results
         else:
             retrieval_prompts = []
+            offset = len(self.base_references or [])
             for i, (contribution, recipe) in enumerate(zip(results["contribution"], results['recipe'])):
-                retrieval_prompts.append(f"# Ref{i + 1}:\n{contribution}\n\n{recipe}")
+                retrieval_prompts.append(f"# Ref{offset + i + 1}:\n{contribution}\n\n{recipe}")
             retrieval_prompts = "\n\n".join(retrieval_prompts)
             return retrieval_prompts
 
@@ -381,6 +336,19 @@ class RAGRecipePredictor(RecipePredictor):
                 "role": "user"
             }
         ]
+
+class ReferenceRecipePredictor(RecipePredictor):
+    """PDF/current-recipe context with no retrieval dataset or embedding calls."""
+
+    def __init__(self, *args, **kwargs):
+        kwargs.setdefault("prompt_filename", _DEFAULT_RAG_PROMPT)
+        super().__init__(*args, **kwargs)
+        self.rag_topk = 0
+        self.base_references = []
+
+    build_prompt = RAGRecipePredictor.build_prompt
+
+
 
 def main(
         model: str = "gpt-4o-mini",
