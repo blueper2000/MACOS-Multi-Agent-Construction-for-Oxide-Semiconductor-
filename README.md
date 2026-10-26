@@ -14,15 +14,20 @@ pip install -r requirements.txt
 streamlit run app_multiagent.py
 ```
 
-Enter your own OpenAI key in the app sidebar and select **Apply credentials**.
+For operator-funded access, configure `OPENAI_API_KEY` and optional `HF_TOKEN`
+in Streamlit Secrets (see [deployment setup](DEPLOYMENT.md)); visitors then use
+the app-managed connection by default without entering keys. Otherwise enter your
+own OpenAI key in the app sidebar and select **Apply credentials**.
 Select **LLM-only**, **PDF**, or **RAG**. LLM-only and PDF require no retrieval
-corpus or Hugging Face token. RAG additionally requires your read-only HF token,
-an authorized dataset ID and a compatible dataset schema. Keys belong to your
-session; changing credentials clears previous results and loaded data.
+corpus or Hugging Face token. RAG additionally requires the connected account's
+read-only HF token, an authorized dataset ID and a compatible dataset schema.
+Personal keys belong to the visitor's session; operator keys remain in platform
+Secrets. Switching connections clears prior session results and loaded data.
 
 For deployment, privacy details, mode differences and memory limits see
 [DEPLOYMENT.md](DEPLOYMENT.md). Select `app_multiagent.py` on branch `main` in
-Streamlit Community Cloud and Python 3.11. No shared API secrets are required.
+Streamlit Community Cloud and Python 3.11. Shared credentials are optional and
+are configured only in the private Secrets editor, never in the repository.
 
 ## Retrieval assets
 

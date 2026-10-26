@@ -44,8 +44,31 @@ st.markdown(
 
 st.sidebar.title("Input Parameters")
 
-def _clear_session():
+
+def _operator_setting(name, default=""):
+    try:
+        value = st.secrets.get(name, default)
+    except (FileNotFoundError, KeyError):
+        return default
+    return value.strip() if isinstance(value, str) else default
+
+
+def _change_connection():
+    use_managed = st.session_state.get("use_managed_credentials", False)
     st.session_state.clear()
+    st.session_state.use_managed_credentials = use_managed
+
+
+def _clear_session():
+    use_managed = st.session_state.get("use_managed_credentials", False)
+    st.session_state.clear()
+    if use_managed:
+        st.session_state.use_managed_credentials = True
+        st.session_state.managed_disconnected = True
+
+
+def _resume_managed_connection():
+    st.session_state.managed_disconnected = False
 
 
 def _apply_credentials():
@@ -57,6 +80,8 @@ def _apply_credentials():
     st.session_state.hf_token_input = token
     st.session_state.active_openai_key = api_key
     st.session_state.active_hf_token = token
+    # A personal key is never silently combined with the operator's HF token.
+    st.session_state.use_managed_credentials = False
 
 
 def _start_generation():
@@ -67,28 +92,52 @@ def _start_generation():
         st.session_state.pop(key, None)
 
 
+operator_api_key = _operator_setting("OPENAI_API_KEY")
+operator_hf_token = _operator_setting("HF_TOKEN")
+use_managed_credentials = False
 with st.sidebar:
-    with st.form("credentials"):
-        st.subheader("API connection")
-        st.text_input("OpenAI API key", type="password", key="openai_key_input")
-        st.text_input("Hugging Face token (optional)", type="password", key="hf_token_input")
-        st.caption("Keys are sent to this app server for API requests and held in your session. "
-                   "They are not written to files or shared caches. API charges apply to your account. "
-                   "Use a read-only HF token limited to the required dataset.")
-        st.form_submit_button("Apply credentials", on_click=_apply_credentials)
+    if operator_api_key:
+        use_managed_credentials = st.checkbox(
+            "Use app-managed credentials", value=True, key="use_managed_credentials",
+            on_change=_change_connection)
+    if use_managed_credentials:
+        st.info("App-managed connection: API costs are paid by the operator. "
+                "The operator's keys are not displayed or copied into input fields.")
+        if st.session_state.get("managed_disconnected"):
+            st.button("Reconnect app-managed connection", on_click=_resume_managed_connection)
+    else:
+        with st.form("credentials"):
+            st.subheader("API connection")
+            st.text_input("OpenAI API key", type="password", key="openai_key_input")
+            st.text_input("Hugging Face token (optional)", type="password", key="hf_token_input")
+            st.caption("Keys are sent to this app server for API requests and held in your session. "
+                       "They are not written to files or shared caches. API charges apply to your account. "
+                       "Use a read-only HF token limited to the required dataset.")
+            st.form_submit_button("Apply credentials", on_click=_apply_credentials)
     st.button("Disconnect and clear session", on_click=_clear_session)
     generation_mode = st.selectbox("Generation mode", ["LLM-only", "PDF", "RAG"], key="generation_mode")
     dataset_id = ""
     dataset_split = "all"
     if generation_mode == "RAG":
-        dataset_id = st.text_input("Hugging Face dataset", "blueper/oxidesc-recipe-ver2")
-        dataset_split = st.text_input("Dataset split (or all)", "all")
-        st.caption("Your HF account must already have access. A token does not grant new permissions.")
+        if use_managed_credentials:
+            # Visitors must not choose arbitrary private repos with the operator's token.
+            dataset_id = _operator_setting("HF_DATASET_ID", "blueper/oxidesc-recipe-ver2")
+            dataset_split = _operator_setting("HF_DATASET_SPLIT", "all")
+            st.caption("RAG uses the dataset selected by the operator.")
+        else:
+            dataset_id = st.text_input("Hugging Face dataset", "blueper/oxidesc-recipe-ver2")
+            dataset_split = st.text_input("Dataset split (or all)", "all")
+            st.caption("Your HF account must already have access. A token does not grant new permissions.")
     st.caption("Sequential reviews use model knowledge and supplied references. "
                "The paper's specialist PDF knowledge bases are not bundled.")
 
-openai_api_key = st.session_state.get("active_openai_key", "")
-hf_token = st.session_state.get("active_hf_token", "")
+if use_managed_credentials:
+    connected = not st.session_state.get("managed_disconnected", False)
+    openai_api_key = operator_api_key if connected else ""
+    hf_token = operator_hf_token if connected else ""
+else:
+    openai_api_key = st.session_state.get("active_openai_key", "")
+    hf_token = st.session_state.get("active_hf_token", "")
 
 # --- Inputs (left sidebar form) ---
 with st.sidebar, st.form("recipe_form"):
@@ -129,7 +178,10 @@ with st.sidebar, st.form("recipe_form"):
 
 # No API requests or dataset access before the user supplies a key and submits.
 if not openai_api_key:
-    st.info("Enter your OpenAI API key in the sidebar and select Apply credentials to start.")
+    if use_managed_credentials:
+        st.info("The app-managed connection is disconnected. Select Reconnect to start.")
+    else:
+        st.info("Enter your OpenAI API key in the sidebar and select Apply credentials to start.")
     st.stop()
 if generate_btn and generation_mode == "PDF" and not files:
     st.warning("Upload at least one PDF for PDF mode, or choose LLM-only.")

@@ -6,11 +6,47 @@
 3. Request an available subdomain such as `macos-recipes`. The resulting address
    is `https://macos-recipes.streamlit.app` if that name is available. This does
    not reserve that name or configure a separately purchased domain.
-4. Deploy. Dependencies are installed from `requirements.txt`. No original
-   dataset, source PDFs, API key, or HF token belongs in the repository or the
-   app's shared Secrets settings for this user-supplied-key deployment.
-5. Open the app. Enter your own key and select **Apply credentials**. Select a
-   mode, fill in targets, then select **Recommend**.
+4. For operator-funded access, open **Advanced settings > Secrets** and enter the
+   TOML described below. Dependencies are installed from `requirements.txt`.
+   Original datasets, source PDFs and actual secrets must stay out of GitHub.
+5. Deploy. With an operator key configured, the app uses it by default. Select a
+   mode, fill in targets, then select **Recommend**. Without an operator key,
+   users enter their own credentials and select **Apply credentials**.
+
+## Operator-managed Secrets
+
+Paste this template into the private Streamlit Secrets editor and fill the two
+empty credential strings there. Do not put real values in `config.toml`, commit
+them to GitHub, or post them in chat.
+
+```toml
+OPENAI_API_KEY = ""
+HF_TOKEN = ""
+HF_DATASET_ID = "blueper/oxidesc-recipe-ver2"
+HF_DATASET_SPLIT = "all"
+```
+
+The key and token are read server-side using `st.secrets`. When `OPENAI_API_KEY`
+is set, **Use app-managed credentials** is selected by default. Visitors do not
+need to enter keys. HF credentials are needed only for RAG. The operator chooses
+the RAG dataset/split in Secrets; visitors cannot select arbitrary repositories
+using the operator's token. Leave the HF token empty if only LLM-only/PDF is needed.
+For local development, the same values may be stored in the Git-ignored file
+`.streamlit/secrets.toml`; `.streamlit/secrets.toml.example` is an empty template.
+
+The operator pays for all API requests using this connection. Anyone who can use
+the deployed app can request outputs based on its configured HF corpus, including
+retrieved recipe text exposed by the existing references and export features.
+A private HF repository hides the raw repository from unauthenticated HF users;
+it does not by itself make this app's outputs private. Configure app access in
+Streamlit for the intended audience and use a token restricted to this dataset.
+This app does not implement its own visitor login or per-user spending quotas.
+
+Visitors can turn off the app-managed connection and supply their own credentials.
+The app never pre-fills input fields with operator secrets or combines a personal
+OpenAI key with the operator's HF token. Switching connections clears old results
+and private records from that session. Disconnect pauses the managed connection
+until the visitor explicitly reconnects; it does not remove platform Secrets.
 
 ## Modes
 
@@ -37,7 +73,7 @@ provisioned deployment. HF/library metadata caching is separate from corpus stor
 
 ## Credentials and privacy
 
-Password fields mask keys visually. Keys are transmitted over the deployed HTTPS
+For personal credentials, password fields mask keys visually. Keys are transmitted over the deployed HTTPS
 connection to the app server to perform requests and remain in session memory;
 they are not end-to-end hidden from the server operator. This app does not write
 them to files, Git, logs, global credential variables, or shared Streamlit caches.
@@ -52,8 +88,9 @@ flight can finish. Do not use a shared browser session for different users.
 
 PDF text, targets, retrieved snippets and feedback needed for generation are sent
 to the selected API provider. Only upload material you are authorized to process.
-Model calls, PDF extraction and sequential reviews incur charges to the user's
-OpenAI account. Use account/project limits appropriate to your intended usage.
+Model calls, PDF extraction and sequential reviews incur charges to the connected
+OpenAI account (the operator's account for app-managed access). Use account/project
+limits appropriate to your intended usage.
 The initial model can be selected in the app; PDF extraction and sequential
 specialist/Supervisor calls currently use `gpt-4o`, so the account needs access
 to that model as well. Scanned/image-only PDFs require OCR beforehand.

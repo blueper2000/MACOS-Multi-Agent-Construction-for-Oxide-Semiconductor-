@@ -244,6 +244,62 @@ class StreamlitTests(unittest.TestCase):
         self.assertFalse(app.exception)
         self.assertIn("latest_recipe_json", app.session_state)
 
+    def managed_app(self):
+        app = self.app()
+        app.secrets["OPENAI_API_KEY"] = "synthetic-operator-api"
+        app.secrets["HF_TOKEN"] = "synthetic-operator-hf"
+        app.secrets["HF_DATASET_ID"] = "synthetic/operator-corpus"
+        app.secrets["HF_DATASET_SPLIT"] = "train"
+        return app.run()
+
+    def test_operator_secrets_default_without_exposing_keys(self):
+        with patch("litellm.completion", side_effect=response) as api:
+            app = self.managed_app()
+            self.assertFalse(app.exception)
+            self.assertTrue(app.checkbox(key="use_managed_credentials").value)
+            self.assertFalse(any(item.key == "openai_key_input" for item in app.text_input))
+            self.button(app, "Recommend").click().run()
+            self.assertFalse(app.exception)
+            self.assertGreaterEqual(api.call_count, 4)
+            self.assertTrue(all(c.kwargs["api_key"] == "synthetic-operator-api" for c in api.call_args_list))
+            self.assertNotIn("synthetic-operator-api", str(app.markdown))
+            self.assertNotIn("synthetic-operator-hf", str(app.info))
+
+    def test_operator_rag_source_is_fixed_and_personal_override_is_separate(self):
+        with patch("cloud_runtime.load_hf_retrieval", side_effect=lambda *args: Dataset.from_list(records())) as loader, patch("litellm.embedding", return_value={"data": [{"embedding": [1.0, 0.0]}]}), patch("litellm.completion", side_effect=response) as api:
+            app = self.managed_app()
+            app.selectbox(key="generation_mode").select("RAG").run()
+            self.assertFalse(any(item.label == "Hugging Face dataset" for item in app.text_input))
+            self.button(app, "Recommend").click().run()
+            self.assertFalse(app.exception)
+            self.assertEqual(loader.call_args.args, ("synthetic/operator-corpus", "synthetic-operator-hf", "train"))
+            app.checkbox(key="use_managed_credentials").uncheck().run()
+            self.assertNotIn("predictors", app.session_state)
+            self.assertNotIn("latest_recipe_json", app.session_state)
+            self.connect(app, "synthetic-personal-api", "")
+            self.button(app, "Recommend").click().run()
+            self.assertFalse(app.exception)
+            self.assertEqual(api.call_args.kwargs["api_key"], "synthetic-personal-api")
+            # No fallback to the owner's HF token in personal mode.
+            app.selectbox(key="generation_mode").select("RAG").run()
+            self.assertTrue(app.error)
+            self.assertEqual(loader.call_count, 1)
+
+    def test_operator_disconnect_and_reconnect(self):
+        with patch("litellm.completion", side_effect=response):
+            app = self.managed_app()
+            self.button(app, "Recommend").click().run()
+            self.button(app, "Disconnect and clear session").click().run()
+            self.assertFalse(app.exception)
+            self.assertNotIn("predictors", app.session_state)
+            self.assertTrue(app.session_state["managed_disconnected"])
+            self.button(app, "Recommend").click().run()
+            self.assertNotIn("predictors", app.session_state)
+            self.button(app, "Reconnect app-managed connection").click().run()
+            self.button(app, "Recommend").click().run()
+            self.assertFalse(app.exception)
+            self.assertIn("latest_recipe_json", app.session_state)
+
 
 if __name__ == "__main__":
     unittest.main()

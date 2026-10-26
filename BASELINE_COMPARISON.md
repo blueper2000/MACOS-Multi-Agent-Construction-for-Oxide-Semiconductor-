@@ -22,7 +22,8 @@ were shared prompt path defaults and the batch prompt path resolver.
 
 ## Intentional deployment changes
 
-- User-supplied credentials replace the app's environment/global credentials.
+- Explicit per-request credentials replace the app's global credential settings;
+  operators can configure `st.secrets`, or visitors can provide their own keys.
 - LLM-only and uploaded-PDF modes require no retrieval corpus. PDF context uses
   the same RAG-format prompt without initializing a retrieval dataset.
 - RAG uses the selected authorized HF dataset instead of a mandatory local file.
