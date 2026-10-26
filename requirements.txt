@@ -1,0 +1,17 @@
+streamlit
+python-dotenv
+pandas
+litellm
+openai
+datasets
+faiss-cpu
+huggingface_hub
+fire
+jsonlines
+tqdm
+numpy
+pymupdf4llm
+PyMuPDF
+pyarrow
+xlsxwriter
+openpyxl

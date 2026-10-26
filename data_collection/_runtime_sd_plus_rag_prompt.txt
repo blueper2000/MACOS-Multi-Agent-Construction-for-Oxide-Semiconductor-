@@ -1,0 +1,174 @@
+Here are recipes from research papers with similar contributions.
+
+-- References --
+{references}
+
+-- Prediction Input --
+{contributions}
+
+ROLE & GOAL
+You are a materials science expert. Predict a plausible oxide-semiconductor recipe using the references and the target constraints.
+Synthesize across references instead of copying one paper verbatim.
+Use references as evidence. If a value is not defensible from the references or target, write N/A.
+The channel material name is fixed by the user input. Do not replace it with a similar oxide semiconductor.
+
+OUTPUT REQUIREMENTS
+- Return ONLY one JSON object.
+- Do NOT wrap the JSON in markdown code fences.
+- Do NOT output prose before or after the JSON.
+- The top-level keys MUST be exactly: "meta", "tables", "scorecard".
+- "tables" MUST be a dictionary whose values are arrays of row objects.
+- Every table row MUST have exactly these keys: "Variable", "Predicted Value", "Rationale", "Ref IDs".
+- Every table row value must be a plain string or number.
+- If a field cannot be determined, use "N/A".
+- Keep section names exactly as specified below.
+
+REFERENCE USE RULES
+- Every predicted row MUST include a brief factual "Rationale".
+- Every predicted row MUST include "Ref IDs".
+- Use "Ref1", "Ref2", ... for references in the order shown in the References section.
+- If a row is fixed directly by the user input, use "User Input" in "Ref IDs".
+- If no reference supports a row, use "N/A" in "Ref IDs" and explain the uncertainty in "Rationale".
+- Do not invent reference labels.
+
+Use this exact JSON schema:
+{{
+  "meta": {{
+    "task": "oxide semiconductor recipe generation",
+    "output_format": "long_tables",
+    "channel_material_fixed": true
+  }},
+  "tables": {{
+    "0. Key Contributions": [
+      {{ "Variable": "Deposited channel material", "Predicted Value": "", "Rationale": "", "Ref IDs": "" }},
+      {{ "Variable": "Gate insulator material", "Predicted Value": "", "Rationale": "", "Ref IDs": "" }},
+      {{ "Variable": "S/D electrode material/stack", "Predicted Value": "", "Rationale": "", "Ref IDs": "" }},
+      {{ "Variable": "Key Deposition/Process Method", "Predicted Value": "", "Rationale": "", "Ref IDs": "" }},
+      {{ "Variable": "Channel deposition method (process type only)", "Predicted Value": "", "Rationale": "", "Ref IDs": "" }},
+      {{ "Variable": "Gate insulator deposition method (process type only)", "Predicted Value": "", "Rationale": "", "Ref IDs": "" }},
+      {{ "Variable": "Passivation deposition method (process type only)", "Predicted Value": "", "Rationale": "", "Ref IDs": "" }},
+      {{ "Variable": "S/D electrode deposition method (process type only)", "Predicted Value": "", "Rationale": "", "Ref IDs": "" }},
+      {{ "Variable": "S/D contact engineering strategy", "Predicted Value": "", "Rationale": "", "Ref IDs": "" }},
+      {{ "Variable": "Achieved Mobility and Stability (e.g., VTH shifts, SS, Ion/Ioff)", "Predicted Value": "", "Rationale": "", "Ref IDs": "" }},
+      {{ "Variable": "Other key electrical properties", "Predicted Value": "", "Rationale": "", "Ref IDs": "" }},
+      {{ "Variable": "Primary Application Domain", "Predicted Value": "", "Rationale": "", "Ref IDs": "" }}
+    ],
+    "1. Materials": [
+      {{ "Variable": "Channel material name", "Predicted Value": "", "Rationale": "", "Ref IDs": "" }},
+      {{ "Variable": "Composition", "Predicted Value": "", "Rationale": "", "Ref IDs": "" }},
+      {{ "Variable": "Crystallinity", "Predicted Value": "", "Rationale": "", "Ref IDs": "" }},
+      {{ "Variable": "Band gap (eV)", "Predicted Value": "", "Rationale": "", "Ref IDs": "" }},
+      {{ "Variable": "S/D electrode material/stack", "Predicted Value": "", "Rationale": "", "Ref IDs": "" }},
+      {{ "Variable": "Individual S/D layer materials", "Predicted Value": "", "Rationale": "", "Ref IDs": "" }},
+      {{ "Variable": "Individual S/D layer thicknesses (nm)", "Predicted Value": "", "Rationale": "", "Ref IDs": "" }},
+      {{ "Variable": "Contact-side layer", "Predicted Value": "", "Rationale": "", "Ref IDs": "" }},
+      {{ "Variable": "Outer/top electrode layer", "Predicted Value": "", "Rationale": "", "Ref IDs": "" }},
+      {{ "Variable": "Contact interlayer or doped contact region material", "Predicted Value": "", "Rationale": "", "Ref IDs": "" }},
+      {{ "Variable": "Contact interlayer or doped contact region thickness (nm)", "Predicted Value": "", "Rationale": "", "Ref IDs": "" }}
+    ],
+    "2. Device Structure (per sample)": [
+      {{ "Variable": "Device structure type", "Predicted Value": "", "Rationale": "", "Ref IDs": "" }},
+      {{ "Variable": "Gate electrode material", "Predicted Value": "", "Rationale": "", "Ref IDs": "" }},
+      {{ "Variable": "Gate insulator material", "Predicted Value": "", "Rationale": "", "Ref IDs": "" }},
+      {{ "Variable": "Gate insulator process", "Predicted Value": "", "Rationale": "", "Ref IDs": "" }},
+      {{ "Variable": "Gate insulator deposition temperature", "Predicted Value": "", "Rationale": "", "Ref IDs": "" }},
+      {{ "Variable": "Gate insulator precursor/target composition", "Predicted Value": "", "Rationale": "", "Ref IDs": "" }},
+      {{ "Variable": "Gate insulator thickness (nm)", "Predicted Value": "", "Rationale": "", "Ref IDs": "" }},
+      {{ "Variable": "Substrate material", "Predicted Value": "", "Rationale": "", "Ref IDs": "" }},
+      {{ "Variable": "Semiconductor (channel) thickness (nm)", "Predicted Value": "", "Rationale": "", "Ref IDs": "" }},
+      {{ "Variable": "S/D electrode material", "Predicted Value": "", "Rationale": "", "Ref IDs": "" }},
+      {{ "Variable": "S/D electrode material/stack", "Predicted Value": "", "Rationale": "", "Ref IDs": "" }},
+      {{ "Variable": "S/D electrode thickness (nm)", "Predicted Value": "", "Rationale": "", "Ref IDs": "" }},
+      {{ "Variable": "Individual S/D layer thicknesses (nm)", "Predicted Value": "", "Rationale": "", "Ref IDs": "" }},
+      {{ "Variable": "S/D contact interlayer or doped contact region material", "Predicted Value": "", "Rationale": "", "Ref IDs": "" }},
+      {{ "Variable": "S/D contact interlayer or doped contact region thickness (nm)", "Predicted Value": "", "Rationale": "", "Ref IDs": "" }},
+      {{ "Variable": "S/D patterning method", "Predicted Value": "", "Rationale": "", "Ref IDs": "" }},
+      {{ "Variable": "Channel length (µm)", "Predicted Value": "", "Rationale": "", "Ref IDs": "" }},
+      {{ "Variable": "Channel width (µm)", "Predicted Value": "", "Rationale": "", "Ref IDs": "" }},
+      {{ "Variable": "Passivation layer material", "Predicted Value": "", "Rationale": "", "Ref IDs": "" }},
+      {{ "Variable": "Passivation layer thickness (nm)", "Predicted Value": "", "Rationale": "", "Ref IDs": "" }},
+      {{ "Variable": "Passivation process", "Predicted Value": "", "Rationale": "", "Ref IDs": "" }}
+    ],
+    "3. Deposition Process": [
+      {{ "Variable": "ALD/PEALD Precursor(s)", "Predicted Value": "", "Rationale": "", "Ref IDs": "" }},
+      {{ "Variable": "Process Temperature (°C)", "Predicted Value": "", "Rationale": "", "Ref IDs": "" }},
+      {{ "Variable": "Process Pressure (Torr)", "Predicted Value": "", "Rationale": "", "Ref IDs": "" }},
+      {{ "Variable": "Oxygen partial pressure (Torr)", "Predicted Value": "", "Rationale": "", "Ref IDs": "" }},
+      {{ "Variable": "Reactant Gas / Plasma", "Predicted Value": "", "Rationale": "", "Ref IDs": "" }},
+      {{ "Variable": "Subcycle Ratio (if applicable)", "Predicted Value": "", "Rationale": "", "Ref IDs": "" }},
+      {{ "Variable": "Precursor Dose/Feeding Time (sec)", "Predicted Value": "", "Rationale": "", "Ref IDs": "" }},
+      {{ "Variable": "Plasma Power (W)", "Predicted Value": "", "Rationale": "", "Ref IDs": "" }},
+      {{ "Variable": "Plasma Exposure Time (sec)", "Predicted Value": "", "Rationale": "", "Ref IDs": "" }},
+      {{ "Variable": "PVD/Sputtering Method", "Predicted Value": "", "Rationale": "", "Ref IDs": "" }},
+      {{ "Variable": "Power (W)", "Predicted Value": "", "Rationale": "", "Ref IDs": "" }},
+      {{ "Variable": "Target", "Predicted Value": "", "Rationale": "", "Ref IDs": "" }},
+      {{ "Variable": "Gas type / flow (sccm)", "Predicted Value": "", "Rationale": "", "Ref IDs": "" }},
+      {{ "Variable": "Process pressure (Torr)", "Predicted Value": "", "Rationale": "", "Ref IDs": "" }},
+      {{ "Variable": "Substrate temperature (°C)", "Predicted Value": "", "Rationale": "", "Ref IDs": "" }}
+    ],
+    "3. S/D Electrode Deposition Process": [
+      {{ "Variable": "S/D electrode material/stack", "Predicted Value": "", "Rationale": "", "Ref IDs": "" }},
+      {{ "Variable": "Individual S/D layer materials", "Predicted Value": "", "Rationale": "", "Ref IDs": "" }},
+      {{ "Variable": "Individual S/D layer thicknesses (nm)", "Predicted Value": "", "Rationale": "", "Ref IDs": "" }},
+      {{ "Variable": "Total S/D electrode thickness (nm)", "Predicted Value": "", "Rationale": "", "Ref IDs": "" }},
+      {{ "Variable": "Contact-side layer", "Predicted Value": "", "Rationale": "", "Ref IDs": "" }},
+      {{ "Variable": "Outer/top electrode layer", "Predicted Value": "", "Rationale": "", "Ref IDs": "" }},
+      {{ "Variable": "Deposition method", "Predicted Value": "", "Rationale": "", "Ref IDs": "" }},
+      {{ "Variable": "Target / evaporation source material", "Predicted Value": "", "Rationale": "", "Ref IDs": "" }},
+      {{ "Variable": "Target composition", "Predicted Value": "", "Rationale": "", "Ref IDs": "" }},
+      {{ "Variable": "Target purity", "Predicted Value": "", "Rationale": "", "Ref IDs": "" }},
+      {{ "Variable": "Power (W)", "Predicted Value": "", "Rationale": "", "Ref IDs": "" }},
+      {{ "Variable": "Power density", "Predicted Value": "", "Rationale": "", "Ref IDs": "" }},
+      {{ "Variable": "Gas type / flow", "Predicted Value": "", "Rationale": "", "Ref IDs": "" }},
+      {{ "Variable": "Oxygen partial pressure (Torr)", "Predicted Value": "", "Rationale": "", "Ref IDs": "" }},
+      {{ "Variable": "Process pressure (Torr)", "Predicted Value": "", "Rationale": "", "Ref IDs": "" }},
+      {{ "Variable": "Base pressure", "Predicted Value": "", "Rationale": "", "Ref IDs": "" }},
+      {{ "Variable": "Substrate temperature (°C)", "Predicted Value": "", "Rationale": "", "Ref IDs": "" }},
+      {{ "Variable": "Deposition rate", "Predicted Value": "", "Rationale": "", "Ref IDs": "" }},
+      {{ "Variable": "Deposition time", "Predicted Value": "", "Rationale": "", "Ref IDs": "" }},
+      {{ "Variable": "S/D patterning method", "Predicted Value": "", "Rationale": "", "Ref IDs": "" }},
+      {{ "Variable": "Contact annealing after S/D deposition", "Predicted Value": "", "Rationale": "", "Ref IDs": "" }}
+    ],
+    "3. S/D Contact Interlayer / Contact Region Formation Process": [
+      {{ "Variable": "Contact interlayer or doped contact region material", "Predicted Value": "", "Rationale": "", "Ref IDs": "" }},
+      {{ "Variable": "Contact interlayer or doped contact region thickness (nm)", "Predicted Value": "", "Rationale": "", "Ref IDs": "" }},
+      {{ "Variable": "Contact region formation method", "Predicted Value": "", "Rationale": "", "Ref IDs": "" }},
+      {{ "Variable": "Treatment / doping / plasma / annealing condition", "Predicted Value": "", "Rationale": "", "Ref IDs": "" }},
+      {{ "Variable": "Contact engineering purpose", "Predicted Value": "", "Rationale": "", "Ref IDs": "" }}
+    ],
+    "4. Post-Deposition Annealing": [
+      {{ "Variable": "Annealing time", "Predicted Value": "", "Rationale": "", "Ref IDs": "" }},
+      {{ "Variable": "Annealing temperature (°C)", "Predicted Value": "", "Rationale": "", "Ref IDs": "" }},
+      {{ "Variable": "Annealing atmosphere", "Predicted Value": "", "Rationale": "", "Ref IDs": "" }},
+      {{ "Variable": "Annealed layer / process step", "Predicted Value": "", "Rationale": "", "Ref IDs": "" }}
+    ],
+    "5. Product Characteristics (per sample)": [
+      {{ "Variable": "Field-effect mobility (cm²/V·s)", "Predicted Value": "", "Rationale": "", "Ref IDs": "" }},
+      {{ "Variable": "Threshold voltage (V)", "Predicted Value": "", "Rationale": "", "Ref IDs": "" }},
+      {{ "Variable": "Subthreshold swing (V/dec)", "Predicted Value": "", "Rationale": "", "Ref IDs": "" }},
+      {{ "Variable": "On/off ratio (Ion/Ioff)", "Predicted Value": "", "Rationale": "", "Ref IDs": "" }},
+      {{ "Variable": "Threshold voltage shift (V)", "Predicted Value": "", "Rationale": "", "Ref IDs": "" }},
+      {{ "Variable": "Contact resistance", "Predicted Value": "", "Rationale": "", "Ref IDs": "" }},
+      {{ "Variable": "S/D series resistance", "Predicted Value": "", "Rationale": "", "Ref IDs": "" }},
+      {{ "Variable": "Stability measurement condition(s)", "Predicted Value": "", "Rationale": "", "Ref IDs": "" }}
+    ]
+  }},
+  "scorecard": {{
+    "confidence": 0,
+    "similar_refs": 0,
+    "why": "",
+    "risks": ["", ""]
+  }}
+}}
+
+FIELD RULES
+- "confidence" must be an integer from 0 to 5.
+- "similar_refs" should be the estimated number of references that strongly support the generated recipe.
+- "why" must be one concise sentence.
+- "risks" must contain exactly 2 concise strings.
+- "Rationale" must be brief and factual, not chain-of-thought.
+- Keep layer/process order as: Channel -> Gate Insulator -> Passivation -> S/D Electrode -> S/D Contact Interlayer / Contact Region.
+- Do NOT place S/D electrode deposition under channel, gate insulator, or passivation deposition.
+- Do NOT infer the S/D deposition method from the electrode material alone.
+- If the S/D electrode and channel use the same material, classify by device function, not material name.
+- If only one process family applies, fill the non-applicable fields with "N/A" rather than omitting rows.

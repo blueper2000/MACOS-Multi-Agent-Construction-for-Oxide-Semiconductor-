@@ -1,0 +1,73 @@
+MACOS Research and Verification License
+Version 1.0, 26 October 2026
+
+Copyright (c) 2026 the respective MACOS copyright holders.
+All rights reserved except as expressly granted below.
+Permission requests: blueper2000@skku.edu
+
+1. Scope
+"Software" means the MACOS source code, prompt templates, and documentation
+provided in this repository, to the extent the licensor holds the relevant
+rights. "Modified Software" includes adaptations and copies containing any
+substantial portion of the Software. Independently licensed third-party
+materials are governed by their own licenses, not by this license.
+
+2. Limited permission
+You may inspect the Software and download, copy, execute, and modify it locally
+solely for your own non-commercial research, academic reproduction of the
+associated paper, and verification of its methods and results. This includes
+research performed by an individual on institution-managed computing resources,
+provided access to the Software and modifications is limited to that individual
+and technical administrators acting solely to support that research.
+You may retain private backups necessary for these purposes.
+Keep this license and all existing copyright and attribution notices with
+permitted copies and clearly identify your local modifications.
+
+3. Restrictions
+Except as permitted by Section 4 or mandatory law, you may not redistribute,
+publish, sublicense, sell, or otherwise provide the original or Modified
+Software to others, in source or binary form. This includes publishing patches,
+diffs, packages, containers, and copies incorporated into another project.
+Commercial use, production deployment, and providing a hosted service to others
+are not permitted. Uses beyond Section 2 require prior written permission from
+the applicable copyright holders. No trademark or endorsement rights are granted.
+
+4. GitHub and statutory rights
+Nothing in this license limits rights granted separately under the applicable
+GitHub Terms of Service for public repositories, including viewing and forking
+within GitHub to the extent those terms permit. Such platform rights do not
+expand the separate execution or use permissions granted by this license.
+Nothing in this license limits non-waivable statutory rights or applicable
+copyright exceptions, including legally permitted quotation.
+
+5. Research findings and outputs
+You may publish your independently authored research findings, evaluation
+metrics, and generated recipe outputs, provided they do not reproduce or
+redistribute the Software or third-party protected material without permission.
+This license does not claim ownership of your independently authored findings
+or outputs. Identify the MACOS version and describe local changes when reporting
+results so readers can interpret the reproduction. Citation of the associated
+paper and repository is requested.
+
+6. Data and dependencies
+This license grants no rights to excluded retrieval datasets, source papers,
+PDF knowledge bases, external services, or third-party dependencies. Obtain and
+use those materials under their respective terms. Availability of source code
+does not imply that the original research dataset is available or that the
+published results can be reproduced without it.
+
+7. Termination
+The permissions in this license terminate automatically if you breach its
+conditions. Upon termination, cease uses relying on these permissions and delete
+copies held solely under them. Rights independently available under Section 4
+are unaffected. Reinstatement requires written permission from the licensor.
+
+8. Disclaimer
+TO THE MAXIMUM EXTENT PERMITTED BY APPLICABLE LAW, THE SOFTWARE IS PROVIDED
+"AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING WARRANTIES
+OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, AND NONINFRINGEMENT.
+TO THE SAME EXTENT, THE COPYRIGHT HOLDERS SHALL NOT BE LIABLE FOR ANY CLAIM,
+DAMAGES, OR OTHER LIABILITY ARISING FROM THE SOFTWARE OR ITS USE.
+Generated recipes require independent scientific and experimental validation.
+
+This is a custom source-available license, not an open-source license.

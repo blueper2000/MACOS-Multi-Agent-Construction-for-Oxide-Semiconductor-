@@ -1,0 +1,13 @@
+.env
+.venv/
+__pycache__/
+*.py[cod]
+*.log
+nohup.out
+
+# Private or large retrieval assets; supply these separately.
+data_collection/*.faiss
+data_collection/*.parquet
+faiss_index*.faiss
+kb_pdfs/
+
