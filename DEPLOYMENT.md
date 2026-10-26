@@ -60,8 +60,21 @@ Sequential material/process review and Supervisor integration remain active in
 all modes. Without specialist PDF knowledge bases, reviewers use model knowledge
 and the available recipe references; this is not the full literature-supported
 configuration of the paper. The omitted specialist PDFs are not fetched implicitly.
-Locally supplied authorized specialist PDFs in `kb_pdfs/` can be loaded explicitly
-using the review KB button; their indexes belong only to that user's session.
+The **Reviewer literature** sidebar has exactly two collections:
+**Material & Precursor Reviewer** and **Process Conditions Reviewer**.
+Upload readable PDFs to the corresponding collection and select **Load reviewer
+papers**. Text extraction and embedding use the connected API account; indexes
+and uploaded papers belong only to the current session. For local deployments,
+authorized PDFs may alternatively be placed in `kb_pdfs/material_properties/` and
+`kb_pdfs/process_conditions/` and loaded with the same button. The old
+`gate_dielectric` and `sd_relation` folders are not separate reviewers and are
+not loaded by this workflow. Specialist PDFs are not downloaded from the recipe
+Parquet dataset or silently published in GitHub.
+
+Loading papers affects subsequent reviews only. Generate a new recipe or request
+a revision after loading; an already completed result is not automatically rerun.
+If no papers are loaded, the sidebar states this explicitly. **Clear reviewer
+papers** removes the session's uploaded reviewer selections and indexes.
 
 The HF dataset must match `data_collection/README.md`. Tokens do not create access
 rights: grant access on HF first. A dataset in a different schema or embedding

@@ -13,11 +13,11 @@ import litellm
 from pdf2recipe import pdf_bytelist_to_recipes, pdf_bytes_to_markdown
 from cloud_runtime import safe_completion as completion
 from datetime import datetime
+from reviewer_sources import REVIEWERS, load_reviewer_sources
 
 # ── Multi-Agent Refinement 모듈 ──
 from multiagent_refinement import (
     run_refinement_sequential,
-    build_kb_from_directory,
 )
 
 APP_DIR = Path(__file__).resolve().parent
@@ -35,11 +35,11 @@ st.set_page_config(
 st.title("MACOS (Multi-Agent Construction of Oxide-Semiconductor Recipes)")
 
 st.markdown(
-    """<p style='font-size:14px'>개발자: 홍지훈, 소속: 성균관대 조성범 교수 연구실, e-mail: blueper2000@skku.edu</p>""", unsafe_allow_html=True
+    """<p style='font-size:14px'>Developer: Ji Hoon Hong | Affiliation: Sung Beom Cho's Laboratory, Sungkyunkwan University | Email: blueper2000@skku.edu</p>""", unsafe_allow_html=True
 )
 
 st.markdown(
-    """<p style='font-size:14px'>문의 사항이나 협업 같은 사항이 있다면 연락해주세요.</p>""", unsafe_allow_html=True
+    """<p style='font-size:14px'>Please contact us for questions or collaboration inquiries.</p>""", unsafe_allow_html=True
 )
 
 st.sidebar.title("Input Parameters")
@@ -69,6 +69,12 @@ def _clear_session():
 
 def _resume_managed_connection():
     st.session_state.managed_disconnected = False
+
+
+def _clear_reviewer_sources():
+    for key in ("specialist_kbs", "reviewer_source_names",
+                "reviewer_pdfs_material_properties", "reviewer_pdfs_process_conditions"):
+        st.session_state.pop(key, None)
 
 
 def _apply_credentials():
@@ -129,7 +135,7 @@ with st.sidebar:
             dataset_split = st.text_input("Dataset split (or all)", "all")
             st.caption("Your HF account must already have access. A token does not grant new permissions.")
     st.caption("Sequential reviews use model knowledge and supplied references. "
-               "The paper's specialist PDF knowledge bases are not bundled.")
+               "Load specialist papers under Reviewer literature for literature-supported review.")
 
 if use_managed_credentials:
     connected = not st.session_state.get("managed_disconnected", False)
@@ -292,7 +298,7 @@ with st.sidebar.expander("Load previous prediction tables"):
             if name_low.endswith(".csv"):
                 df = pd.read_csv(prev_file)
                 if "Section" not in df.columns:
-                    st.error("CSV에 'Section' 컬럼이 필요합니다.")
+                    st.error("The CSV file must contain a 'Section' column.")
                 else:
                     for sec, sub in df.groupby("Section"):
                         sub = sub.drop(columns=["Section"], errors="ignore")
@@ -303,7 +309,7 @@ with st.sidebar.expander("Load previous prediction tables"):
                 sheet = "tables_full" if "tables_full" in xls.sheet_names else xls.sheet_names[0]
                 df = pd.read_excel(xls, sheet_name=sheet)
                 if "Section" not in df.columns:
-                    st.error(f"엑셀 시트 '{sheet}'에 'Section' 컬럼이 필요합니다.")
+                    st.error(f"Excel sheet '{sheet}' must contain a 'Section' column.")
                 else:
                     for sec, sub in df.groupby("Section"):
                         sub = sub.drop(columns=["Section"], errors="ignore")
@@ -378,9 +384,9 @@ with st.sidebar.expander("Load previous prediction tables"):
                 st.session_state.current_recipe = json_text
                 st.session_state.fixed_examples = []
                 st.session_state.retrieval_examples = meta.get("references", [])
-                st.toast("번들 파일을 불러왔습니다. 다음 질문부터 이 컨텍스트를 사용합니다.")
+                st.toast("Recipe bundle loaded. Subsequent questions will use this context.")
         except Exception as e:
-            st.error(f"파일을 해석하는 중 오류가 발생했습니다: {safe_error(e)}")
+            st.error(f"Could not parse the file: {safe_error(e)}")
 
 
 clear_btn = st.sidebar.button("Clear Conversation")
@@ -400,84 +406,58 @@ if clear_btn:
     st.session_state.pop("initial_pdf_warnings", None)
     st.rerun()
 
-# ── Specialist Knowledge Base (폴더 자동 로드) ───────────────────────────
-KB_PDF_ROOT = os.path.join(os.path.dirname(__file__), "kb_pdfs")
-
+# Two literature collections, one for each sequential reviewer.
+KB_PDF_ROOT = str(APP_DIR / "kb_pdfs")
 SPECIALIST_KB_META = {
-    "material_properties": ("1️⃣ 재료 특성 (조성비·결정성·프리커서)", os.path.join(KB_PDF_ROOT, "material_properties")),
-    "gate_dielectric":     ("2️⃣ 게이트 절연막 계면",                  os.path.join(KB_PDF_ROOT, "gate_dielectric")),
-    "process_conditions":  ("3️⃣ 채널 증착 조건 & PDA",               os.path.join(KB_PDF_ROOT, "process_conditions")),
-    "sd_relation":         ("4️⃣ 리뷰 논문",                          os.path.join(KB_PDF_ROOT, "sd_relation")),
+    key: (label, str(Path(KB_PDF_ROOT) / key)) for key, label in REVIEWERS.items()
 }
 
-
-def _load_all_kbs(api_key: str) -> dict:
-    """
-    kb_pdfs/ 하위 폴더에서 각 specialist KB 를 빌드합니다.
-    명시적으로 빌드하며 현재 사용자 세션에만 보관합니다.
-    PDF 파일이 없는 폴더는 건너뜁니다.
-    """
-    import glob
-    kbs = {}
-    for key, (label, folder) in SPECIALIST_KB_META.items():
-        pdfs = glob.glob(os.path.join(folder, "*.pdf"))
-        if not pdfs:
-            continue
-        try:
-            kb = build_kb_from_directory(folder, api_key=api_key)
-            if kb and len(kb) > 0:
-                kbs[key] = kb
-        except Exception as e:
-            # KB 빌드 실패는 앱 실행을 막지 않음
-            st.warning(f"{label}: specialist PDF loading failed.")
-    return kbs
-
-
-# KB 로드 (API 키가 있을 때만)
-_kb_cache: dict = st.session_state.get("specialist_kbs", {})
-
-# 사이드바: KB 상태 표시 + 수동 갱신 버튼
-with st.sidebar.expander("📚 리뷰 논문", expanded=False):
-    st.caption(
-        f"**kb_pdfs/** 하위 폴더에 PDF 를 넣으면 답변과 레시피 검토에 자동으로 참조합니다.\n\n"
-        "Specialist sources are optional and are not included in this public release."
-    )
-
-    import glob as _glob
-    any_pdf = False
-    for key, (label, folder) in SPECIALIST_KB_META.items():
-        pdfs = _glob.glob(os.path.join(folder, "*.pdf"))
-        kb = _kb_cache.get(key)
-        if pdfs:
-            any_pdf = True
-            status = f"✅ {len(kb)} chunks ({len(pdfs)} files)" if kb else "⚠️ 빌드 실패"
+with st.sidebar.expander("Reviewer literature", expanded=False):
+    st.caption("The workflow has two reviewers, followed by a Supervisor. "
+               "Their specialist PDFs are separate from the recipe-retrieval dataset. "
+               "Upload papers below and select Load reviewer papers. "
+               "Extraction and embedding use the connected API account.")
+    reviewer_uploads = {}
+    for role, label in REVIEWERS.items():
+        reviewer_uploads[role] = st.file_uploader(
+            f"{label} PDFs", type=["pdf"], accept_multiple_files=True,
+            key=f"reviewer_pdfs_{role}")
+    if st.button("Load reviewer papers", use_container_width=True):
+        with st.spinner("Extracting reviewer papers and building literature indexes..."):
+            try:
+                kbs, names, failures = load_reviewer_sources(
+                    reviewer_uploads, api_key=openai_api_key, local_root=KB_PDF_ROOT)
+                st.session_state.specialist_kbs = kbs
+                st.session_state.reviewer_source_names = names
+                if failures:
+                    st.warning("Some papers had no extractable text. Use text-based PDFs or apply OCR first.")
+                elif not kbs:
+                    st.info("No reviewer PDFs were provided. Upload papers for one or both reviewers.")
+                else:
+                    st.success("Reviewer literature is ready for subsequent reviews.")
+            except Exception as error:
+                st.error(safe_error(error))
+    st.button("Clear reviewer papers", on_click=_clear_reviewer_sources, use_container_width=True)
+    for role, label in REVIEWERS.items():
+        kb = st.session_state.get("specialist_kbs", {}).get(role)
+        names = st.session_state.get("reviewer_source_names", {}).get(role, [])
+        if kb is not None and len(kb):
+            st.write(f"**{label}**: {len(names)} papers, {len(kb)} searchable chunks")
+            with st.expander(f"{label}: loaded sources"):
+                for name in names:
+                    st.write(name)
         else:
-            status = "— (PDF 없음)"
-        st.write(f"**{label}**: {status}")
-        if pdfs:
-            with st.expander(f"  파일 목록", expanded=False):
-                for p in pdfs:
-                    st.write(f"  • {os.path.basename(p)}")
-
-    st.markdown("---")
-    if st.button("🔄 KB 재빌드 (파일 변경 시)", use_container_width=True):
-        st.session_state.specialist_kbs = _load_all_kbs(openai_api_key)
-        st.rerun()
-
-    kb_top_k = st.slider("KB 검색 청크 수 (top-k)", 1, 6, 3, key="kb_top_k")
-
-    if not any_pdf:
-        st.info(
-            "아직 PDF 가 없습니다. 위 경로의 폴더에 논문 PDF 를 넣은 뒤 "
-            "앱을 재시작하거나 '재빌드' 버튼을 누르세요."
-        )
+            st.write(f"**{label}**: No specialist papers loaded")
+    st.slider("Literature chunks per reviewer (top-k)", 1, 6, 3, key="kb_top_k")
+    st.caption("Only loaded papers are searched. Loading papers does not rerun a completed review. "
+               "Generate a new recipe or request a revision to use them. "
+               "Without loaded papers, reviewers use model knowledge; "
+               "this is not the paper's complete specialist-literature configuration.")
 
 
 def _get_knowledge_bases() -> dict:
-    """캐싱된 Specialist KB 딕셔너리를 반환합니다.
-    키: material_properties, gate_dielectric, process_conditions
-    """
-    return _kb_cache
+    return {role: kb for role, kb in st.session_state.get("specialist_kbs", {}).items()
+            if role in REVIEWERS}
 
 if not generate_btn and not hasattr(st.session_state, "messages") and not st.session_state.get("latest_recipe_json"):
     st.write(
@@ -759,7 +739,7 @@ def _render_json_tables_block(text: str,
     with st.expander(title, expanded=expanded):
         score, dfs = _json_to_tables(text)
         if not dfs:
-            st.info("응답에서 유효한 JSON 테이블 구조를 찾지 못했습니다. 템플릿 준수 여부를 확인하세요.")
+            st.info("No valid JSON tables were found in the response. Check that the output follows the template.")
             return
 
         # 상단 요약 카드
@@ -996,7 +976,7 @@ def predict_recipe(
 
     pdf_bytes_list = []
     if files:
-        _step(f"📄 PDF {len(files)}개에서 레시피 추출 중…")
+        _step(f"Extracting recipes from {len(files)} PDF files...")
         pdf_bytes_list = [file.getvalue() for file in files]
         initial_pdf_context, initial_pdf_names, initial_pdf_warnings = _build_initial_pdf_context(files)
         st.session_state.initial_pdf_context = initial_pdf_context
@@ -1007,7 +987,7 @@ def predict_recipe(
         references = pdf_bytelist_to_recipes(pdf_bytes_list, api_key=openai_api_key)
         if not references:
             raise ValueError("No readable recipe content was extracted from the uploaded PDFs.")
-        _step(f"✅ PDF 추출 완료 ({len(references)}개 참조)")
+        _step(f"PDF extraction complete ({len(references)} references)")
     else:
         st.session_state.initial_pdf_context = ""
         st.session_state.initial_pdf_names = []
@@ -1024,7 +1004,7 @@ def predict_recipe(
         contributions += f"\n\n## Other Constraints\n{other_contstraints}"
 
     if use_rag and top_k > 0:
-        _step(f"🔍 FAISS 유사 논문 검색 중 (top-{top_k})…")
+        _step(f"Searching related literature with FAISS (top-{top_k})...")
 
     batch = [
         {
@@ -1034,11 +1014,11 @@ def predict_recipe(
         }
     ]
 
-    _step(f"🤖 {model} 으로 레시피 초안 생성 중…")
+    _step(f"Generating an initial recipe with {model}...")
     output = ""
     for _, output in predictor.predict(batch):
         pass
-    _step("✅ 레시피 초안 생성 완료")
+    _step("Initial recipe generation complete")
 
     retrieval_examples = []
     if use_rag:
@@ -1058,7 +1038,7 @@ def predict_recipe(
                     "pdf_file": pdf_file,
                     "ref_id": f"Ref{len(fixed_examples) + i + 1}",
                 })
-        _step(f"✅ 유사 논문 {len(retrieval_examples)}개 검색 완료")
+        _step(f"Retrieved {len(retrieval_examples)} related references")
 
     st.session_state.retrieval_examples = retrieval_examples
     references = _assign_ref_ids(fixed_examples + retrieval_examples) if (fixed_examples or retrieval_examples) else None
@@ -1182,13 +1162,13 @@ def _read_uploaded_file_for_context(uploaded_file, max_chars: int = 50000) -> tu
             df = pd.read_csv(BytesIO(raw))
             text = _dataframe_preview_text(df)
         else:
-            return "", f"{name}: 지원하지 않는 파일 형식입니다."
+            return "", f"{name}: Unsupported file format."
     except Exception as e:
-        return "", f"{name}: 파일을 읽는 중 오류가 발생했습니다: {safe_error(e)}"
+        return "", f"{name}: Could not read the file: {safe_error(e)}"
 
     text = (text or "").strip()
     if not text:
-        return "", f"{name}: 추출된 텍스트가 없습니다."
+        return "", f"{name}: No text could be extracted."
     text = _clip_or_focus_text(text, max_chars=max_chars)
     return f"<ATTACHED_FILE name=\"{name}\">\n{text}\n</ATTACHED_FILE>", None
 
@@ -1198,11 +1178,11 @@ def _pdf_bytes_to_context(name: str, raw: bytes, max_chars: int = 50000) -> tupl
     try:
         text = pdf_bytes_to_markdown(raw)
     except Exception as e:
-        return "", f"{name}: PDF 원문을 읽는 중 오류가 발생했습니다: {safe_error(e)}"
+        return "", f"{name}: Could not extract the PDF text: {safe_error(e)}"
 
     text = (text or "").strip()
     if not text:
-        return "", f"{name}: 추출된 PDF 원문 텍스트가 없습니다."
+        return "", f"{name}: No text could be extracted from the PDF."
     text = _clip_or_focus_text(text, max_chars=max_chars)
     return f"<INITIAL_UPLOADED_PDF name=\"{name}\">\n{text}\n</INITIAL_UPLOADED_PDF>", None
 
@@ -1293,7 +1273,7 @@ def _build_qa_kb_context(user_text: str, top_k: int | None = None) -> str:
         return ""
 
     return (
-        "Relevant specialist literature excerpts from kb_pdfs. "
+        "Relevant excerpts from loaded reviewer literature. "
         "Use these as supporting context when answering or revising, but prioritize the current recipe and user question.\n\n"
         + "\n\n==========\n\n".join(sections)
     )
@@ -1335,9 +1315,9 @@ def _compose_user_prompt_with_attachments(user_text: str, attachment_context: st
 # ─────────────────────────────────────────────────────────────────────────────
 
 STEP_LABELS = {
-    1: ("🔬 Step 1/3", "재료 특성 (조성비·결정성·프리커서) 검토"),
-    2: ("🌡️ Step 2/3", "채널 증착 조건 & Post-Deposition Annealing 검토"),
-    3: ("🔗 Step 3/3", "피드백 통합 → 개량 레시피 생성"),
+    1: ("🔬 Step 1/3", "Material & Precursor Reviewer"),
+    2: ("🌡️ Step 2/3", "Process Conditions Reviewer"),
+    3: ("🔗 Step 3/3", "Supervisor: integrate feedback and refine the recipe"),
 }
 
 def _run_refinement_with_status(raw_recipe_json: str, label_prefix: str = "") -> dict:
@@ -1349,21 +1329,21 @@ def _run_refinement_with_status(raw_recipe_json: str, label_prefix: str = "") ->
 
     step_containers: dict = {}
 
-    with st.status(f"{label_prefix}Multi-Agent 검토 진행 중…", expanded=True) as status_widget:
+    with st.status(f"{label_prefix}Multi-agent review in progress...", expanded=True) as status_widget:
 
         def _on_step(step_num: int, label: str, feedback=None):
             icon, title = STEP_LABELS.get(step_num, ("🔹", label))
             if feedback is None:
                 # 스텝 시작
-                st.write(f"{icon} **{title}** — 시작")
+                st.write(f"{icon} **{title}** - started")
                 step_containers[step_num] = st.empty()
             else:
                 # 스텝 완료 → expander로 피드백 표시
                 if step_num < 4:
-                    with st.expander(f"{icon} {title} — 완료", expanded=False):
+                    with st.expander(f"{icon} {title} - complete", expanded=False):
                         st.write(feedback)
                 else:
-                    st.write(f"{icon} **{title}** — 완료 ✅")
+                    st.write(f"{icon} **{title}** - complete")
 
         try:
             result = run_refinement_sequential(
@@ -1395,9 +1375,9 @@ def _run_refinement_with_status(raw_recipe_json: str, label_prefix: str = "") ->
                                 "so the parseable draft recipe is shown instead."
                             )
             result_holder.update(result)
-            status_widget.update(label=f"{label_prefix}Multi-Agent 검토 완료 ✅", state="complete", expanded=False)
+            status_widget.update(label=f"{label_prefix}Multi-agent review complete", state="complete", expanded=False)
         except Exception as e:
-            status_widget.update(label=f"{label_prefix}오류 발생", state="error", expanded=True)
+            status_widget.update(label=f"{label_prefix}An error occurred", state="error", expanded=True)
             st.error(safe_error(e))
 
     return result_holder
@@ -1411,26 +1391,26 @@ def _render_refinement_result(result: dict, base_key: str = "initial"):
     if result.get("refinement_warning"):
         st.warning(result.get("refinement_warning"))
 
-    with st.expander("📋 Specialist 검토 요약 보기", expanded=False):
-        with st.expander("1️⃣ 재료 특성 (조성비·결정성·프리커서) 검토", expanded=False):
-            st.write(result.get("material_properties") or "_결과 없음_")
-        with st.expander("2️⃣ 채널 증착 조건 & PDA 검토", expanded=False):
-            st.write(result.get("process_conditions") or "_결과 없음_")
+    with st.expander("Reviewer feedback summary", expanded=False):
+        with st.expander("1. Material & Precursor Reviewer", expanded=False):
+            st.write(result.get("material_properties") or "_No feedback available_")
+        with st.expander("2. Process Conditions Reviewer", expanded=False):
+            st.write(result.get("process_conditions") or "_No feedback available_")
 
-    # 개량 레시피 테이블
+    # Recipe revision: 테이블
     if refined_json_str:
         _render_json_tables_block(
             refined_json_str,
             base_name=f"refined_recipe__{base_key}",
             expanded=True,
-            title="📦 Multi-Agent 개량 레시피",
+            title="Refined recipe",
         )
         # 다운로드
         meta_show = st.session_state.get("latest_meta")
         dl_col1, dl_col2 = st.columns(2)
         with dl_col1:
             st.download_button(
-                label="⬇️ 개량 레시피 (JSON)",
+                label="Download refined recipe (JSON)",
                 data=refined_json_str.encode("utf-8"),
                 file_name=f"refined_recipe_{base_key}.json",
                 mime="application/json",
@@ -1464,12 +1444,12 @@ def _render_refinement_result(result: dict, base_key: str = "initial"):
                     key=f"dl_refined_excel__{base_key}",
                 )
     else:
-        st.warning("개량 레시피 JSON 을 파싱할 수 없습니다.")
+        st.warning("The refined recipe could not be parsed as JSON.")
         st.text_area("Raw output", refined_json_str, height=200, key=f"raw__{base_key}")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Session bootstrap  ── 초기 레시피 생성 & 자동 multi-agent 실행
+# Session bootstrap  ── Initial recipe: 생성 & 자동 multi-agent 실행
 # ─────────────────────────────────────────────────────────────────────────────
 if not hasattr(st.session_state, "messages"):
     st.session_state.messages = []
@@ -1485,7 +1465,7 @@ if not hasattr(st.session_state, "messages"):
         st.session_state.messages.append({"role": "assistant", "content": recipe})
     else:
         # 신규 생성 경로
-        with st.status("📋 레시피 생성 진행 중…", expanded=True) as _predict_status:
+        with st.status("Recipe generation in progress...", expanded=True) as _predict_status:
             try:
                 recipe, references, user_prompt = predict_recipe(
                     material_name, synthesis_technique,
@@ -1498,7 +1478,7 @@ if not hasattr(st.session_state, "messages"):
                 _predict_status.update(label="Generation failed", state="error")
                 st.error(safe_error(error))
                 st.stop()
-            _predict_status.update(label="✅ 레시피 초안 완성", state="complete", expanded=False)
+            _predict_status.update(label="Initial recipe ready", state="complete", expanded=False)
             st.session_state.references = references
             st.session_state.messages.append({"role": "user", "content": user_prompt})
             st.session_state.messages.append({"role": "assistant", "content": recipe})
@@ -1506,8 +1486,8 @@ if not hasattr(st.session_state, "messages"):
             st.session_state.current_recipe = recipe
 
     # 자동 multi-agent refinement 실행
-    st.subheader("🔬 Multi-Agent 검토 & 개량")
-    ma_result = _run_refinement_with_status(recipe, label_prefix="초기 레시피 ")
+    st.subheader("Multi-agent review and refinement")
+    ma_result = _run_refinement_with_status(recipe, label_prefix="Initial recipe: ")
     if ma_result:
         refined_str = ma_result.get("refined_recipe", "")
         st.session_state.refined_result_initial = ma_result
@@ -1525,7 +1505,7 @@ else:
 # UI: 초기 개량 결과 표시
 # ─────────────────────────────────────────────────────────────────────────────
 with st.chat_message("assistant"):
-    st.header("Multi-Agent 개량 레시피")
+    st.header("Multi-agent refined recipe")
 
     initial_result = st.session_state.get("refined_result_initial")
     if initial_result:
@@ -1536,7 +1516,7 @@ with st.chat_message("assistant"):
         score0, dfs0 = _json_to_tables(display_recipe)
         if dfs0:
             _render_json_tables_block(display_recipe, base_name="prediction_tables__initial",
-                                      expanded=True, title="📦 레시피 테이블")
+                                      expanded=True, title="Recipe tables")
         else:
             st.markdown(display_recipe)
 
@@ -1586,15 +1566,15 @@ hist_container = st.container()
 st.subheader("Q&A / Feedback")
 with st.form("qa_feedback_form", clear_on_submit=True):
     prompt = st.text_area(
-        "질문 또는 레시피 개량 요청",
-        placeholder="예: 이 레시피에서 PDA 온도를 250°C 이하로 제한하면 어떤 조건이 바뀌어야 하나요?",
+        "Ask a question or request a recipe revision",
+        placeholder="For example: Which conditions should change if the PDA temperature is limited to 250 C?",
         height=110,
     )
     uploaded_chat_files = st.file_uploader(
-        "참고 파일 첨부 (PDF, Excel, CSV)",
+        "Attach reference files (PDF, Excel, CSV)",
         type=["pdf", "xlsx", "xls", "csv"],
         accept_multiple_files=True,
-        help="첨부파일 내용은 답변 또는 레시피 개량 컨텍스트로 함께 사용됩니다.",
+        help="Attachments provide context for answers and recipe revisions.",
     )
     submit_prompt = st.form_submit_button("Send", use_container_width=True)
 
@@ -1604,20 +1584,20 @@ just_submitted = False
 if submit_prompt and (prompt.strip() or uploaded_chat_files):
     just_submitted = True
     attachment_context, attachment_names, attachment_warnings = _build_attachment_context(uploaded_chat_files)
-    display_prompt = prompt.strip() or "첨부파일에 대해 답변해주세요."
+    display_prompt = prompt.strip() or "Please answer using the attached files."
     qa_kb_context = _build_qa_kb_context(display_prompt)
     prompt_for_model = _compose_user_prompt_with_attachments(prompt, attachment_context, qa_kb_context)
     if attachment_names:
-        display_prompt += "\n\n첨부파일: " + ", ".join(attachment_names)
+        display_prompt += "\n\nAttachments: " + ", ".join(attachment_names)
 
     with st.chat_message("user"):
         st.markdown(display_prompt)
         for warning in attachment_warnings:
             st.warning(warning)
         if qa_kb_context:
-            st.caption("Specialist KB 검색 결과를 답변 컨텍스트에 포함했습니다.")
+            st.caption("Retrieved reviewer literature was included in the answer context.")
         if not prompt_for_model:
-            st.error("질문을 입력하거나 읽을 수 있는 파일을 첨부해주세요.")
+            st.error("Enter a question or attach a readable file.")
             st.stop()
     st.session_state.messages.append({"role": "user", "content": display_prompt})
 
@@ -1625,7 +1605,7 @@ if submit_prompt and (prompt.strip() or uploaded_chat_files):
 
     if intent == "qa":
         # ── QA 경로: 빠른 답변 ───────────────────────────────────────────────
-        with st.spinner("답변 생성 중…"):
+        with st.spinner("Generating an answer..."):
             asst_text = ask_with_previous_recipe(
                 st.session_state.messages, model, recipe, prompt_for_model,
             )
@@ -1638,20 +1618,20 @@ if submit_prompt and (prompt.strip() or uploaded_chat_files):
                 _render_json_tables_block(
                     json_part,
                     base_name=f"chat_qa__{len(st.session_state.messages)}",
-                    expanded=True, title="📦 답변 테이블",
+                    expanded=True, title="Answer tables",
                 )
 
     else:
         # ── Revise 경로: RAG 재생성 → multi-agent 자동 통과 ─────────────────
         with st.chat_message("assistant"):
-            st.markdown("**레시피 개량 시작:** RAG 재검색 후 Multi-Agent 검토를 진행합니다.")
+            st.markdown("**Starting recipe revision:** refresh available references, then run the sequential reviewers and Supervisor.")
 
             original_contribution = st.session_state.get("original_contribution", "")
             current_contribution = st.session_state.get("current_contribution", original_contribution)
             fixed_examples = st.session_state.get("fixed_examples", [])
 
-            with st.status("🔄 레시피 재생성 중…", expanded=True) as _revise_status:
-                st.write("🤖 피드백 반영해 기여문 수정 중…")
+            with st.status("Regenerating the recipe...", expanded=True) as _revise_status:
+                st.write("Updating the target contribution using your feedback...")
                 revised_contribution = revise_contribution_with_feedback(
                     model_name=model,
                     original_contribution=original_contribution,
@@ -1659,8 +1639,8 @@ if submit_prompt and (prompt.strip() or uploaded_chat_files):
                     current_recipe=recipe,
                     user_feedback=prompt_for_model,
                 )
-                st.write("✅ 기여문 수정 완료")
-                st.write(f"🔢 임베딩 재계산 & FAISS 재검색 중…")
+                st.write("Target contribution updated")
+                st.write(f"Preparing references for recipe revision...")
                 new_raw_recipe, new_retrieval_examples, new_refs, revised_contribution = regenerate_recipe_with_feedback(
                     model_name=model,
                     revised_contribution=revised_contribution,
@@ -1668,8 +1648,8 @@ if submit_prompt and (prompt.strip() or uploaded_chat_files):
                     fixed_examples=fixed_examples,
                     top_k=top_k,
                 )
-                st.write("✅ 레시피 초안 재생성 완료")
-                _revise_status.update(label="✅ 레시피 재생성 완료", state="complete", expanded=False)
+                st.write("Initial recipe regenerated")
+                _revise_status.update(label="Recipe regeneration complete", state="complete", expanded=False)
 
             st.session_state.current_contribution = revised_contribution
             st.session_state.retrieval_examples = new_retrieval_examples
@@ -1682,7 +1662,7 @@ if submit_prompt and (prompt.strip() or uploaded_chat_files):
 
             # Multi-agent 실행 (실시간 st.status)
             turn_key = f"chat_{len(st.session_state.messages)}"
-            ma_result = _run_refinement_with_status(new_raw_recipe, label_prefix="개량 레시피 ")
+            ma_result = _run_refinement_with_status(new_raw_recipe, label_prefix="Recipe revision: ")
 
             refined_str = ma_result.get("refined_recipe", "") if ma_result else ""
             final_recipe = refined_str if refined_str else new_raw_recipe
@@ -1698,7 +1678,7 @@ if submit_prompt and (prompt.strip() or uploaded_chat_files):
                 if dfs_c:
                     _render_json_tables_block(final_recipe,
                                               base_name=f"chat_revise__{turn_key}",
-                                              expanded=True, title="📦 개량 레시피")
+                                              expanded=True, title="Refined recipe")
                 else:
                     st.markdown(final_recipe)
 
@@ -1721,7 +1701,7 @@ with hist_container:
                 if json_part:
                     _render_json_tables_block(
                         json_part, expanded=False,
-                        title="📦 이전 개량 레시피",
+                        title="Previous refined recipe",
                     )
             else:
                 st.markdown(message["content"])

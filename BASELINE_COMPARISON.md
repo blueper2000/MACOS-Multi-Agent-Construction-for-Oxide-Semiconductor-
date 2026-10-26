@@ -31,6 +31,10 @@ were shared prompt path defaults and the batch prompt path resolver.
 - Dataset records, clients and FAISS indexes are isolated in session memory;
   process-wide HF login and persisted FAISS files are removed from this path.
 - Specialist KB loading is explicit and session-local; missing KBs are disclosed.
+- The literature UI now exposes the two active reviewer roles only. Legacy
+  gate-dielectric and S/D folder categories are not extra agents. Review papers
+  can be uploaded per reviewer without publishing the PDFs in the source release.
+- Static UI labels, progress messages and contact information are in English.
 - The original prediction iterator's early `break` dropped later batches; removed.
 - PDF plus retrieved references now get distinct sequential IDs; an old recipe
   is revision context, not a newly fabricated literature reference.

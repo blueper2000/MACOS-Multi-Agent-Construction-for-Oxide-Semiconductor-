@@ -109,7 +109,7 @@ def build_kb_from_pdfs(
         try:
             text = _extract_text_from_pdf_bytes(pdf_bytes)
         except Exception as e:
-            print(f"[KB] PDF 텍스트 추출 실패 ({label}): {e}")
+            print(f"[KB] Could not extract PDF text ({label}): {e}")
             continue
         chunks = _chunk_text(text, chunk_size=chunk_size, overlap=overlap)
         all_chunks.extend(chunks)
@@ -163,7 +163,7 @@ def build_kb_from_directory(
                 pdf_bytes_list.append(f.read())
             source_names.append(os.path.basename(path))
         except Exception as e:
-            print(f"[KB] 파일 읽기 실패 ({path}): {e}")
+            print(f"[KB] Could not read file ({path}): {e}")
 
     return build_kb_from_pdfs(pdf_bytes_list, api_key, source_names=source_names, **kwargs)
 
@@ -185,13 +185,13 @@ def run_refinement_sequential(
     reference_context: str = "",
 ) -> dict[str, str]:
     """
-    3개의 Specialist Agent 를 순차 실행합니다.
+    Run two sequential reviewers followed by a Supervisor.
     Streamlit 실시간 UI 업데이트(st.status 콜백)에 최적화되어 있습니다.
 
     Parameters
     ----------
     recipe_json : str
-        개량할 초기 레시피 JSON 문자열
+        개량할 Initial recipe: JSON 문자열
     api_key : str
         OpenAI API 키
     specialist_model : str
@@ -202,7 +202,7 @@ def run_refinement_sequential(
         feedback=str  → 스텝 완료 시 호출
     knowledge_bases : dict | None
         각 specialist 전용 SpecialistKnowledgeBase 딕셔너리.
-        키: "material_properties", "gate_dielectric", "process_conditions"
+        Keys: "material_properties", "process_conditions"
         값: SpecialistKnowledgeBase 인스턴스 (없는 키는 KB 없이 실행)
     kb_top_k : int
         KB 에서 검색할 청크 수 (기본 3)
@@ -213,7 +213,6 @@ def run_refinement_sequential(
     -------
     dict with keys:
         material_properties : 조성비·결정성·프리커서 통합 검토 피드백
-        gate_dielectric      : 게이트 절연막 계면 검토 피드백
         process_conditions   : 채널 증착 온도/시간 + PDA 검토 피드백
         refined_recipe       : 개량된 레시피 JSON 문자열
     """
@@ -260,7 +259,7 @@ def run_refinement_sequential(
     }
 
     # ── Step 1: 재료 특성 통합 검토 (조성비 + 결정성 + 프리커서) ─────────────
-    _cb(1, "재료 특성 (조성비·결정성·프리커서) 검토 중…")
+    _cb(1, "Material & Precursor Reviewer running...")
     ctx1 = _kb_context(
         "material_properties",
         "oxide semiconductor composition cation ratio crystallinity amorphous precursor ALD "
@@ -296,10 +295,10 @@ Recipe JSON:
 Return a unified, actionable feedback covering all three aspects and their interactions.
 If literature excerpts are provided above, cite specific findings where relevant.""")
     result["material_properties"] = mat
-    _cb(1, "재료 특성 검토 완료", mat)
+    _cb(1, "Material & Precursor Reviewer complete", mat)
 
     # ── Step 2: 채널 증착 조건 + PDA 검토 ────────────────────────────────────
-    _cb(2, "채널 증착 조건 & Post-Deposition Annealing 검토 중…")
+    _cb(2, "Process Conditions Reviewer running...")
     ctx2 = _kb_context(
         "process_conditions",
         "channel deposition temperature time substrate heating rate ALD cycle "
@@ -333,10 +332,10 @@ Recipe JSON:
 Return concise, actionable feedback on deposition conditions and PDA.
 If literature excerpts are provided above, cite specific findings where relevant.""")
     result["process_conditions"] = proc
-    _cb(2, "채널 증착 조건 & PDA 검토 완료", proc)
+    _cb(2, "Process Conditions Reviewer complete", proc)
 
-    # ── Step 3: 피드백 통합 → 개량 레시피 JSON ──────────────────────────────
-    _cb(3, "피드백 통합 중… (개량 레시피 생성)")
+    # ── Step 3: 피드백 통합 → Recipe revision: JSON ──────────────────────────────
+    _cb(3, "Supervisor: integrating feedback and refining the recipe...")
     refined = _llm(f"""You are a senior oxide semiconductor process engineer.
 Produce an IMPROVED version of the recipe JSON that incorporates all specialist feedback.
 
@@ -369,6 +368,6 @@ Available references for "Ref IDs":
 
 Return the complete refined recipe as a single JSON object.""", max_tokens=12000)
     result["refined_recipe"] = refined
-    _cb(3, "개량 완료 ✅", refined)
+    _cb(3, "Supervisor refinement complete", refined)
 
     return result

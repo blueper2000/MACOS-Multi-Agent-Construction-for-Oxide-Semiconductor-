@@ -2,6 +2,7 @@
 import ast
 import json
 import os
+import re
 from pathlib import Path
 import sys
 import unittest
@@ -149,6 +150,67 @@ class PredictorTests(unittest.TestCase):
         self.assertEqual(ns["pdf_bytelist_to_recipes"].call_args.kwargs["api_key"], "synthetic-api-a")
 
 
+class ReviewerTests(unittest.TestCase):
+    def test_two_roles_and_session_upload_routing(self):
+        from reviewer_sources import REVIEWERS, load_reviewer_sources
+        self.assertEqual(set(REVIEWERS), {"material_properties", "process_conditions"})
+        material = SimpleNamespace(name="synthetic-material.pdf", getvalue=lambda: b"material")
+        process = SimpleNamespace(name="synthetic-process.pdf", getvalue=lambda: b"process")
+        legacy = SimpleNamespace(name="ignored.pdf", getvalue=lambda: b"ignored")
+        with patch("multiagent_refinement.build_kb_from_pdfs", return_value=["synthetic chunk"]) as build:
+            kbs, names, failures = load_reviewer_sources({
+                "material_properties": [material], "process_conditions": [process],
+                "gate_dielectric": [legacy], "sd_relation": [legacy],
+            }, "synthetic-api-a")
+        self.assertEqual(set(kbs), set(REVIEWERS))
+        self.assertEqual(build.call_count, 2)
+        self.assertEqual(build.call_args_list[0].args[0], [b"material"])
+        self.assertEqual(build.call_args_list[1].args[0], [b"process"])
+        self.assertEqual(names["material_properties"], ["synthetic-material.pdf"])
+        self.assertFalse(failures)
+
+    def test_no_papers_is_explicit_and_causes_no_embedding(self):
+        from reviewer_sources import load_reviewer_sources
+        with patch("multiagent_refinement.build_kb_from_pdfs") as build:
+            self.assertEqual(load_reviewer_sources({}, "synthetic-api-a"), ({}, {}, []))
+            build.assert_not_called()
+
+    def test_two_reviews_then_supervisor_with_distinct_literature(self):
+        import numpy as np
+        from multiagent_refinement import SpecialistKnowledgeBase, run_refinement_sequential
+        material = SpecialistKnowledgeBase(["MATERIAL-PAPER-MARKER"], np.array([[1., 0.]]))
+        process = SpecialistKnowledgeBase(["PROCESS-PAPER-MARKER"], np.array([[1., 0.]]))
+        results = ["MATERIAL-FEEDBACK-MARKER", "PROCESS-FEEDBACK-MARKER", RECIPE]
+        def reply(**kwargs):
+            from litellm import ModelResponse
+            return ModelResponse(choices=[{"message": {"role": "assistant", "content": results.pop(0)}}])
+        callbacks = []
+        with patch("litellm.completion", side_effect=reply) as api, patch("litellm.embedding", return_value={"data": [{"embedding": [1., 0.]}]}) as embed:
+            output = run_refinement_sequential(RECIPE, "synthetic-api-a",
+                knowledge_bases={"material_properties": material, "process_conditions": process},
+                step_callback=lambda number, label, feedback=None: callbacks.append((number, label)))
+        self.assertEqual(api.call_count, 3)
+        self.assertEqual(embed.call_count, 2)
+        prompts = [call.kwargs["messages"][0]["content"] for call in api.call_args_list]
+        self.assertIn("MATERIAL-PAPER-MARKER", prompts[0])
+        self.assertNotIn("PROCESS-PAPER-MARKER", prompts[0])
+        self.assertIn("PROCESS-PAPER-MARKER", prompts[1])
+        self.assertIn("MATERIAL-FEEDBACK-MARKER", prompts[1])
+        self.assertIn("MATERIAL-FEEDBACK-MARKER", prompts[2])
+        self.assertIn("PROCESS-FEEDBACK-MARKER", prompts[2])
+        self.assertEqual(output["refined_recipe"], RECIPE)
+        self.assertEqual({number for number, _ in callbacks}, {1, 2, 3})
+
+    def test_static_display_strings_are_english(self):
+        for name in ("app_multiagent.py", "multiagent_refinement.py", "reviewer_sources.py"):
+            tree = ast.parse((ROOT / name).read_text(encoding="utf-8"))
+            docs = {id(node.value) for node in ast.walk(tree) if isinstance(node, ast.Expr)
+                    and isinstance(node.value, ast.Constant) and isinstance(node.value.value, str)}
+            remaining = [node.lineno for node in ast.walk(tree) if isinstance(node, ast.Constant)
+                         and isinstance(node.value, str) and id(node) not in docs and re.search("[가-힣]", node.value)]
+            self.assertEqual(remaining, [], name)
+
+
 class StreamlitTests(unittest.TestCase):
     def app(self):
         from streamlit.testing.v1 import AppTest
@@ -170,6 +232,24 @@ class StreamlitTests(unittest.TestCase):
         self.assertFalse(app.exception)
         self.assertTrue(any("OpenAI API key" in item.value for item in app.info))
         api.assert_not_called()
+
+    def test_english_names_and_exactly_two_reviewer_collections(self):
+        app = self.app().run()
+        self.connect(app)
+        self.assertFalse(app.exception)
+        visible = " ".join(item.value for item in app.markdown)
+        self.assertIn("Ji Hoon Hong", visible)
+        self.assertIn("Sung Beom Cho", visible)
+        self.assertNotRegex(visible, "[가-힣]")
+        self.assertIn("Material & Precursor Reviewer", visible)
+        self.assertIn("Process Conditions Reviewer", visible)
+        self.assertNotIn("Gate Dielectric", visible)
+        self.button(app, "Load reviewer papers").click().run()
+        self.assertFalse(app.exception)
+        self.assertEqual(app.session_state["specialist_kbs"], {})
+        self.button(app, "Clear reviewer papers").click().run()
+        self.assertFalse(app.exception)
+        self.assertNotIn("specialist_kbs", app.session_state)
 
     def test_llm_generation_reviews_new_request_and_disconnect(self):
         with patch("datasets.load_dataset", side_effect=AssertionError("No LLM retrieval")), patch("litellm.embedding", side_effect=AssertionError("No LLM embedding")), patch("litellm.completion", side_effect=response) as api:
